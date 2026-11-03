@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Карта Мониторинга</title>
+    <!-- Подключаем стили Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* Карта на весь экран */
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #e5e5e5;
+        }
+    </style>
+</head>
+<body>
+    <!-- Контейнер для карты -->
+    <div id="map"></div>
+
+    <!-- Подключаем скрипт Leaflet -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Инициализация карты (центр на Москве)
+        var map = L.map('map').setView([55.65, 37.45], 12);
+
+        // Подложка (схема OSM)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+
+        // Функция для добавления маркеров (будем вызывать из Python)
+        window.addVehicle = function(lat, lon, name, status) {
+            var marker = L.marker([lat, lon]).addTo(map);
+            marker.bindPopup(`<b>${name}</b><br>Статус: ${status}`);
+        };
+        
+        // Для проверки добавим тестовую машину
+        window.addVehicle(55.65, 37.45, "Тестовая машина", "В движении");
+    </script>
+</body>
+</html>

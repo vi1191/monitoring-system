@@ -1,12 +1,19 @@
 ﻿import sys
 import csv
+import os
+import time
+import http.server
+import socketserver
+import threading
+from PyQt6.QtCore import QUrl
+from PyQt6.QtWebEngineWidgets import QWebEngineView
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, 
     QHBoxLayout, QWidget, QPushButton, QLabel, QMessageBox, QGroupBox, 
     QRadioButton, QHeaderView, QLineEdit, QFileDialog, QDialog, QFormLayout,
-    QDateEdit
+    QDateEdit, QSplitter
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor, QFont
@@ -28,6 +35,31 @@ except ImportError:
 
 
 # START:SETTINGS
+class LocalServerThread(threading.Thread):
+    def __init__(self, directory="../map", port=8000):
+        super().__init__()
+        self.daemon = True
+        self.directory = directory
+        self.port = port
+        self.server = None
+
+    def run(self):
+        original_dir = os.getcwd()
+        try:
+            if os.path.exists(self.directory):
+                os.chdir(self.directory)
+            handler = http.server.SimpleHTTPRequestHandler
+            self.server = socketserver.TCPServer(("", self.port), handler)
+            self.server.serve_forever()
+        except Exception as e:
+            print(f"Ошибка сервера карты: {e}")
+        finally:
+            os.chdir(original_dir)
+
+    def stop(self):
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -261,15 +293,6 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.lbl_count)
         main_layout.addLayout(search_layout)
 
-        group_ticket = QGroupBox('Тип заявки (предпросмотр, без отправки)')
-        group_layout = QHBoxLayout()
-        self.radio_bnso = QRadioButton('Не работает БНСО (нет связи)')
-        self.radio_track = QRadioButton('Некорректный трек (сбой местоположения)')
-        self.radio_bnso.setChecked(True)
-        group_layout.addWidget(self.radio_bnso)
-        group_layout.addWidget(self.radio_track)
-        group_ticket.setLayout(group_layout)
-
         self.table = QTableWidget()
         headers = [
             'Выбор', 'Номер ТС', 'Марка', 'Задание', 'Выполнено %', 
@@ -300,8 +323,32 @@ class MainWindow(QMainWindow):
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.installEventFilter(self)
         
-        main_layout.addWidget(self.table, 1)
-        main_layout.addWidget(group_ticket)
+        # ---------- СПЛИТТЕР (Таблица слева, Карта справа) ----------
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        
+        # ЛЕВАЯ ЧАСТЬ: Таблица
+        self.splitter.addWidget(self.table)
+        
+        # ПРАВАЯ ЧАСТЬ: Контейнер для карты
+        self.map_container = QWidget()
+        map_layout = QVBoxLayout(self.map_container)
+        map_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.web_view = QWebEngineView()
+        map_layout.addWidget(self.web_view)
+        self.splitter.addWidget(self.map_container)
+        
+        # Пропорции: 650px на таблицу, 1000px на карту (можете менять)
+        self.splitter.setSizes([650, 1000])
+        
+        # Добавляем сплиттер вместо таблицы
+        main_layout.addWidget(self.splitter, 1)
+        
+        # Запуск сервера
+        self.server_thread = LocalServerThread(directory="../map_clean", port=8000)
+        self.server_thread.start()
+        time.sleep(0.5)
+        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html"))
 
         # ---------- Кнопка "Просмотр заявок" справа, зелёная ----------
         ticket_btn_layout = QHBoxLayout()
@@ -546,6 +593,10 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=run_bot, daemon=True).start()
 
+    def closeEvent(self, event):
+        if hasattr(self, 'server_thread'):
+            self.server_thread.stop()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
