@@ -1,0 +1,15 @@
+﻿node_modules/
+dist/
+.vite/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+index.html.bak
+test-results/
+playwright-report/
+Playwright-Report/
+.omc/
+.aider*

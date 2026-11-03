@@ -1,0 +1,853 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Карта техники — Жилищник (Тропарёво-Никулино)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f5f7fa; --panel: #ffffff; --panel-2: #f0f4f8;
+    --border: #d5dbdf; --text: #2c3e50; --text-muted: #566573;
+    --blue: #2980b9; --blue-hover: #21618c; --blue-light: #3498db; --blue-bg: #eaf4fc;
+    --green: #27ae60; --green-hover: #229954; --red: #e74c3c; --red-hover: #c0392b;
+    --orange: #e67e22; --gray: #95a5a6;
+    --shadow: 0 2px 8px rgba(41,128,185,0.08);
+    --shadow-md: 0 4px 16px rgba(41,128,185,0.12);
+    --shadow-lg: 0 8px 32px rgba(41,128,185,0.18);
+    --topbar-h: 56px;
+  }
+  body.dark {
+    --bg: #1a2028; --panel: #232b35; --panel-2: #2a3340;
+    --border: #3a4553; --text: #e4e9ee; --text-muted: #9aa8b8;
+    --blue: #3498db; --blue-hover: #5dade2; --blue-light: #5dade2; --blue-bg: #1e3a52;
+    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+    --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  body { font-family: 'Segoe UI', Arial, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; background: var(--bg); color: var(--text); transition: background 0.2s, color 0.2s; }
+
+  #topbar { height: var(--topbar-h); background: var(--panel); display: flex; align-items: center; padding: 0 12px; gap: 8px; border-bottom: 1px solid var(--border); box-shadow: var(--shadow); z-index: 2000; position: relative; }
+  #topbar .logo { font-weight: bold; font-size: 15px; color: var(--blue); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+  #topbar .spacer { flex: 1; }
+  #live-clock { white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--text); }
+  .top-btn { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; background: var(--panel); color: var(--text); transition: all 0.15s; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+  .top-btn:hover { background: var(--blue-bg); border-color: var(--blue-light); color: var(--blue); }
+  .top-btn.primary { background: var(--blue); color: white; border-color: var(--blue); }
+  .top-btn.primary:hover { background: var(--blue-hover); }
+  .top-btn.gray { background: var(--panel-2); }
+  .top-btn.icon-only { padding: 7px 9px; }
+  .top-btn.pulse { animation: pulse 1.5s infinite; }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(39,174,96,0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(39,174,96,0); }
+  }
+
+  .dropdown { position: relative; }
+  .dropdown > .top-btn .caret { font-size: 9px; opacity: 0.6; margin-left: 2px; }
+  .dropdown-menu { position: absolute; top: calc(100% + 6px); right: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 6px 0; min-width: 240px; display: none; z-index: 2100; }
+  .dropdown.open .dropdown-menu { display: block; }
+  .dropdown-menu .dm-item { padding: 8px 14px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: var(--text); }
+  .dropdown-menu .dm-item:hover { background: var(--blue-bg); color: var(--blue); }
+  .dropdown-menu button.dm-item { border: 0; width: 100%; text-align: left; background: transparent; font: inherit; }
+  .dropdown-menu .dm-item.danger { color: var(--red); }
+  .dropdown-menu .dm-item.danger:hover { background: rgba(231,76,60,0.1); }
+  .dropdown-menu .dm-sep { border-top: 1px solid var(--border); margin: 4px 0; }
+  .dropdown-menu .dm-title { padding: 6px 14px; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .dropdown-menu .dm-hint { padding: 6px 14px; font-size: 10px; color: var(--text-muted); font-style: italic; }
+
+  #save-status { font-size: 12px; color: var(--green); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 4px; transition: all 0.2s; }
+  #save-status.saving { color: var(--orange); }
+
+  #mode-badge { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  #mode-badge.view { background: var(--blue-bg); color: var(--blue); }
+  #mode-badge.edit { background: rgba(231,76,60,0.15); color: var(--red); }
+
+  #app { display: flex; flex: 1; min-height: 0; position: relative; }
+
+  #sidebar { width: 320px; min-width: 320px; background: var(--panel); display: flex; flex-direction: column; border-right: 1px solid var(--border); transition: margin-left 0.25s ease; }
+  #sidebar.collapsed { margin-left: -320px; }
+  #map { flex: 1; min-width: 0; position: relative; }
+  #sidebar-toggle { position: absolute; top: 12px; left: 12px; z-index: 1500; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text); box-shadow: var(--shadow-md); display: none; }
+  #sidebar-toggle:hover { background: var(--blue-bg); color: var(--blue); }
+  #sidebar-toggle.visible { display: flex; align-items: center; gap: 8px; }
+
+  #sidebar-header { padding: 10px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); position: relative; }
+  #sidebar-header h2 { font-size: 14px; margin-bottom: 4px; color: var(--blue); display: flex; justify-content: space-between; align-items: center; }
+  #sidebar-header .expand-btn { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 1px solid var(--border); background: var(--panel); border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); transition: all 0.15s; }
+  #sidebar-header .expand-btn:hover { background: var(--blue-bg); color: var(--blue); border-color: var(--blue-light); }
+  #sidebar-header .close-side { cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; padding: 0 4px; }
+  #sidebar-header .close-side:hover { color: var(--red); }
+  #sidebar-header .count { font-size: 11px; color: var(--text-muted); }
+  #sidebar-header .count b { color: var(--blue); }
+  #on-route-count { cursor: pointer; text-decoration: underline; padding: 1px 4px; border: 0; background: transparent; color: var(--blue); font: inherit; font-weight: bold; border-radius: 4px; transition: all 0.15s; }
+  #on-route-count:hover { background: var(--blue-bg); color: var(--blue-hover); }
+  #on-route-count.active { background: var(--blue); color: white; text-decoration: none; }
+
+  .sidebar-hideable { transition: all 0.2s ease; }
+
+  .mode-toggle { display: flex; gap: 3px; margin-top: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px; }
+  .mode-toggle button { flex: 1; padding: 5px 4px; border: none; background: transparent; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; color: var(--text-muted); transition: all 0.15s; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .mode-toggle button .icon { font-size: 14px; }
+  .mode-toggle button:hover { background: var(--blue-bg); color: var(--blue); }
+  .mode-toggle button.active { background: var(--blue); color: white; }
+
+  #overlap-toggle { display: none; margin: 6px 0 0; padding: 5px 8px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  #overlap-toggle.active { background: #f8d7da; border-color: #dc3545; }
+  #overlap-toggle label { cursor: pointer; font-weight: 600; color: #856404; display: flex; align-items: center; gap: 6px; }
+  #overlap-toggle.active label { color: #721c24; }
+
+  .category-tabs { display: flex; gap: 3px; padding: 8px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  .cat-tab { flex: 1; padding: 10px 6px; border: 2px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; background: var(--panel); color: var(--text); transition: all 0.15s; text-align: center; position: relative; }
+  .cat-tab:hover { border-color: var(--blue-light); background: var(--blue-bg); }
+  .cat-tab.active { background: var(--blue); color: white; border-color: var(--blue); }
+  .cat-tab.routes-pinned { box-shadow: inset 0 0 0 2px #f1c40f; }
+  .cat-tab .cnt { display: block; font-size: 11px; font-weight: 500; opacity: 0.9; margin-top: 2px; }
+
+  .uchastok-buttons { display: flex; gap: 4px; padding: 8px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border); justify-content: center; align-items: center; flex-wrap: wrap; }
+  .uch-label { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-right: 4px; }
+  .uch-btn { width: 34px; height: 34px; border: 2px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 700; background: var(--panel); color: var(--text); transition: all 0.15s; text-align: center; position: relative; }
+  .uch-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+  .uch-btn[data-u="1"] { border-color: #e74c3c; color: #e74c3c; }
+  .uch-btn[data-u="1"].active { background: #e74c3c; color: white; }
+  .uch-btn[data-u="2"] { border-color: #2980b9; color: #2980b9; }
+  .uch-btn[data-u="2"].active { background: #2980b9; color: white; }
+  .uch-btn[data-u="3"] { border-color: #27ae60; color: #27ae60; }
+  .uch-btn[data-u="3"].active { background: #27ae60; color: white; }
+  .uch-btn[data-u="4"] { border-color: #e67e22; color: #e67e22; }
+  .uch-btn[data-u="4"].active { background: #e67e22; color: white; }
+  .uch-btn[data-u="5"] { border-color: #8e44ad; color: #8e44ad; }
+  .uch-btn[data-u="5"].active { background: #8e44ad; color: white; }
+  .uch-btn[data-u="6"] { border-color: #1abc9c; color: #1abc9c; }
+  .uch-btn[data-u="6"].active { background: #1abc9c; color: white; }
+
+  .panel-open-btn { display: block; width: 100%; margin: 6px 0 0; padding: 6px 8px; background: var(--blue-bg); border: 1px dashed var(--blue-light); border-radius: 6px; color: var(--blue); font-weight: 600; font-size: 12px; cursor: pointer; text-align: center; }
+  .panel-open-btn:hover { background: var(--blue); color: white; border-style: solid; }
+
+  .cat-actions { display: flex; gap: 4px; padding: 6px 10px; background: var(--blue-bg); border-bottom: 1px solid var(--border); }
+  .cat-actions button { flex: 1; padding: 7px 8px; border: none; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.15s; }
+  .cat-actions .btn-add { background: var(--green); color: white; }
+  .cat-actions .btn-add:hover { background: var(--green-hover); }
+  .cat-actions .btn-rem { background: var(--red); color: white; }
+  .cat-actions .btn-rem:hover { background: var(--red-hover); }
+  .cat-actions .btn-all { background: var(--blue); color: white; }
+  .cat-actions .btn-all:hover { background: var(--blue-hover); }
+
+  .controls { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); position: relative; }
+  .controls input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); font-size: 13px; }
+  .controls input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-bg); }
+  #search-suggest { position: absolute; top: 100%; left: 10px; right: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 0 0 6px 6px; box-shadow: var(--shadow-md); max-height: 260px; overflow-y: auto; z-index: 100; display: none; }
+  #search-suggest.open { display: block; }
+  #search-suggest .sg-item { padding: 8px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+  #search-suggest .sg-item:last-child { border-bottom: none; }
+  #search-suggest .sg-item:hover { background: var(--blue-bg); }
+  #search-suggest .sg-item .sg-plate { font-weight: 700; color: var(--blue); min-width: 90px; }
+  #search-suggest .sg-item .sg-model { color: var(--text-muted); font-size: 11px; flex: 1; }
+  #search-suggest .sg-item .sg-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: var(--blue-bg); color: var(--blue); }
+
+  #machine-list { flex: 1; overflow-y: auto; padding: 8px 10px; }
+  #machine-list::-webkit-scrollbar { width: 6px; }
+  #machine-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .subtype-group { margin-bottom: 10px; }
+  .subtype-header { display: flex; align-items: center; gap: 6px; padding: 7px 10px; background: var(--blue); color: white; border-radius: 5px; font-size: 12px; font-weight: bold; cursor: pointer; user-select: none; box-shadow: 0 2px 4px rgba(41,128,185,0.2); transition: all 0.15s; }
+  .subtype-header:hover { background: var(--blue-hover); }
+  .subtype-header .arrow { font-size: 10px; width: 12px; text-align: center; }
+  .subtype-header .st-name { flex: 1; letter-spacing: 0.3px; }
+  .subtype-header .st-count { font-size: 11px; opacity: 0.85; font-weight: 600; background: rgba(255,255,255,0.2); padding: 1px 7px; border-radius: 10px; }
+  .subtype-header.no-subtype { background: var(--gray); }
+  .subtype-header .st-edit { font-size: 11px; opacity: 0.6; cursor: pointer; padding: 0 4px; }
+  .subtype-header .st-edit:hover { opacity: 1; }
+  .subtype-header .st-name-input { flex: 1; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; font-size: 12px; font-weight: bold; padding: 2px 6px; border-radius: 3px; outline: none; }
+
+  .machine-card { background: var(--panel); margin-bottom: 4px; padding: 9px 12px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border); border-left: 4px solid var(--gray); transition: all 0.15s; font-size: 13px; display: flex; align-items: flex-start; gap: 8px; position: relative; }
+  .machine-card .tech-icon { width: 48px; height: 36px; border-radius: 5px; object-fit: cover; flex-shrink: 0; background: #f0f2f5; cursor: zoom-in; transition: transform 0.25s ease; }
+  .machine-card .tech-icon:hover { transform: scale(1.05); }
+  .machine-card .card-photo-url, .machine-card .card-photo-file { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; padding: 2px; flex-shrink: 0; }
+  .machine-card .card-photo-url:hover, .machine-card .card-photo-file:hover { background: var(--blue-bg); color: var(--blue); }
+  .machine-card:hover { background: var(--blue-bg); border-color: var(--blue-light); box-shadow: var(--shadow); }
+  .machine-card.active { background: linear-gradient(to right, #2980b9 0%, #3498db 30%, var(--blue-bg) 100%); color: white; border-color: var(--blue); box-shadow: var(--shadow-md); border-left-width: 6px; }
+  .machine-card.active .plate { color: white; }
+  .machine-card.active .model { color: rgba(255,255,255,0.95); }
+  .machine-card.active .meta { color: rgba(255,255,255,0.85); }
+  .machine-card.active .meta .badge { background: rgba(255,255,255,0.25); color: white; }
+  .machine-card.active .route-badge { background: rgba(255,255,255,0.25); color: white; }
+  .machine-card.has-route { background: linear-gradient(to right, var(--blue-bg) 0%, var(--panel) 60%); font-weight: 600; }
+  .machine-card.has-route.active { background: linear-gradient(to right, #2980b9 0%, #3498db 30%, var(--blue-bg) 100%); }
+  .machine-card .card-content { flex: 1; min-width: 0; }
+  .machine-card .plate { font-weight: bold; color: var(--blue); font-size: 14px; display: flex; align-items: center; gap: 4px; }
+  .machine-card .route-badge { color: var(--green); font-size: 10px; font-weight: 600; background: rgba(39,174,96,0.12); padding: 1px 5px; border-radius: 3px; }
+  .machine-card .model { color: var(--text); font-size: 12px; margin-top: 3px; font-weight: 500; line-height: 1.4; }
+  .machine-card .meta { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--text-muted); font-weight: 400; }
+  .machine-card .meta .badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; background: var(--blue-bg); color: var(--blue); }
+  .machine-card .chk { margin-top: 2px; cursor: pointer; width: 16px; height: 16px; accent-color: var(--blue); flex-shrink: 0; }
+  .machine-card .color-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid #fff; flex-shrink: 0; margin-top: 2px; box-shadow: 0 0 0 1px var(--border); }
+  .machine-card .card-more { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; font-size: 14px; line-height: 1; display: none; align-items: center; justify-content: center; }
+  .machine-card { flex-wrap: wrap; }
+  .machine-card .card-more { position: static; flex-shrink: 0; }
+  .machine-card .card-photo-url, .machine-card .card-photo-file { min-width: 25px; min-height: 25px; }
+  .machine-card .card-route-select { display: block; max-width: 100%; margin-top: 5px; }
+  .machine-card .card-remove-subtype, .subtype-add { font-size: 11px; cursor: pointer; margin-top: 5px; }
+  .machine-card:hover .card-more { display: flex; }
+  .machine-card .card-more:hover { background: var(--blue); color: white; border-color: var(--blue); }
+
+  #mini-route { position: absolute; top: 12px; right: 12px; z-index: 1200; background: var(--panel); color: var(--text); border-radius: 8px; width: 440px; max-height: calc(100vh - 90px); box-shadow: var(--shadow-lg); display: none; flex-direction: column; border: 1px solid var(--border); }
+  #mini-route.open { display: flex; }
+  #mini-route .mr-header { padding: 12px 16px; background: var(--blue); color: white; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  #mini-route .mr-header .close { cursor: pointer; font-size: 20px; line-height: 1; padding: 0 4px; }
+  .route-tabs-wrap { background: var(--panel-2); border-bottom: 2px solid var(--blue); padding: 6px 8px 0; overflow-x: auto; }
+  .route-tabs { display: flex; gap: 2px; }
+  .route-tab { padding: 7px 10px; font-size: 12px; font-weight: 600; border-radius: 5px 5px 0 0; cursor: pointer; background: var(--panel); color: var(--text-muted); border: 1px solid var(--border); border-bottom: none; position: relative; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px; max-width: 140px; }
+  .route-tab:hover { background: var(--blue-bg); color: var(--blue); }
+  .route-tab.active { background: var(--blue); color: white; border-color: var(--blue); }
+  .route-tab .tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
+  .route-tab .tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .route-tab.active .tab-dot { background: #fff; }
+  .route-tab .tab-arrows { display: none; gap: 1px; margin-left: 2px; }
+  .route-tab:hover .tab-arrows { display: flex; }
+  .route-tab .tab-arrows span { cursor: pointer; padding: 0 3px; font-size: 10px; border-radius: 2px; user-select: none; }
+  .route-tab.active .tab-arrows span { color: #fff; }
+  .route-tab .tab-arrows span:hover { background: rgba(255,255,255,0.3); }
+  #mini-route .mr-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+  #mini-route .mr-info { background: var(--blue-bg); padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 12px; line-height: 1.5; }
+  #mini-route .mr-info b { color: var(--blue); }
+  #mini-route h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin: 12px 0 6px; letter-spacing: 0.5px; }
+  #mini-route .mr-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); }
+  .mr-item { display: flex; align-items: center; gap: 6px; padding: 7px 8px; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .mr-item:last-child { border-bottom: none; }
+  .mr-item:hover { background: var(--blue-bg); }
+  .mr-item .num { background: var(--orange); color: white; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; flex-shrink: 0; }
+  .mr-item .name { flex: 1; }
+  .mr-item .mv { cursor: pointer; color: var(--blue); padding: 0 3px; font-size: 13px; font-weight: bold; user-select: none; }
+  .mr-item .mv:hover { background: rgba(41,128,185,0.15); border-radius: 3px; }
+  .mr-item .rm { cursor: pointer; color: var(--red); font-weight: bold; padding: 0 4px; user-select: none; }
+  .mr-item .rm:hover { background: rgba(231,76,60,0.15); border-radius: 3px; }
+  .mr-item button { border: 0; background: transparent; font-family: inherit; }
+  .route-order-icon { border-radius: 50%; background: var(--orange); color: #fff; border: 2px solid #fff; text-align: center; line-height: 18px; font-weight: bold; box-shadow: 0 1px 4px #333; }
+  .mr-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; }
+  #mini-route .mr-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .mr-btn { padding: 8px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all 0.15s; }
+  .mr-btn.primary { background: var(--blue); color: white; flex: 1; }
+  .mr-btn.primary:hover { background: var(--blue-hover); }
+  .mr-btn.green { background: var(--green); color: white; }
+  .mr-btn.green:hover { background: var(--green-hover); }
+  .mr-btn.red { background: var(--red); color: white; }
+  .mr-btn.red:hover { background: var(--red-hover); }
+  .mr-btn.gray { background: var(--gray); color: white; }
+  .mr-btn.gray:hover { background: #7f8c8d; }
+  .mr-btn.orange { background: var(--orange); color: white; }
+  .mr-btn.orange:hover { background: #d35400; }
+
+  #picker { position: absolute; top: 12px; right: 12px; z-index: 1300; background: var(--panel); border-radius: 8px; width: 440px; max-height: calc(100vh - 90px); box-shadow: var(--shadow-lg); display: none; flex-direction: column; border: 1px solid var(--border); }
+  #picker.open { display: flex; }
+  #picker .p-header { padding: 12px 16px; background: var(--green); color: white; border-radius: 8px 8px 0 0; font-weight: bold; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  #picker .p-header .close { cursor: pointer; font-size: 20px; line-height: 1; padding: 0 4px; }
+  #picker .p-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+  #picker input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; margin-bottom: 8px; background: var(--panel); color: var(--text); }
+  #picker input[type=text]:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 2px rgba(39,174,96,0.15); }
+  .picker-list { max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); }
+  .picker-list label { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .picker-list label:last-child { border-bottom: none; }
+  .picker-list label:hover { background: var(--blue-bg); }
+  .picker-list label.empty { opacity: 0.5; cursor: not-allowed; }
+  .picker-list label.polygon { background: #fff8ec; }
+  .picker-list input[type=checkbox] { width: auto; cursor: pointer; }
+  .picker-list .draw-btn { font-size: 10px; padding: 2px 6px; border: none; border-radius: 3px; background: var(--orange); color: white; cursor: pointer; }
+  .picker-list label span { flex: 1; }
+  #picker .p-actions { display: flex; gap: 6px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+  #editor-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 480px; background: var(--panel); color: var(--text); z-index: 2500; box-shadow: -6px 0 24px rgba(41,128,185,0.15); display: none; flex-direction: column; border-left: 2px solid var(--border); }
+  #editor-panel.open { display: flex; }
+  #editor-panel .ep-header { padding: 14px 18px; background: var(--blue); color: white; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  #editor-panel .ep-header .close { cursor: pointer; font-size: 22px; line-height: 1; padding: 0 4px; }
+  #editor-panel .ep-body { flex: 1; overflow-y: auto; padding: 14px 18px; }
+  #editor-panel h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin: 14px 0 6px; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; }
+  #editor-panel h3:first-child { margin-top: 0; }
+  #editor-panel input, #editor-panel select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); font-size: 13px; }
+  #editor-panel input:focus, #editor-panel select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-bg); }
+  #editor-panel .row { display: flex; gap: 6px; margin-bottom: 6px; }
+  #editor-panel .row > * { flex: 1; }
+  .ed-btn { padding: 7px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; background: var(--blue); color: white; transition: all 0.15s; white-space: nowrap; }
+  .ed-btn:hover { background: var(--blue-hover); }
+  .ed-btn.green { background: var(--green); } .ed-btn.green:hover { background: var(--green-hover); }
+  .ed-btn.orange { background: var(--orange); } .ed-btn.orange:hover { background: #d35400; }
+  .ed-btn.red { background: var(--red); } .ed-btn.red:hover { background: var(--red-hover); }
+  .ed-btn.gray { background: var(--gray); } .ed-btn.gray:hover { background: #7f8c8d; }
+  .ed-btn.mini { padding: 4px 8px; font-size: 11px; }
+  .ed-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .ed-street-list { overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); }
+  .ed-street-item { padding: 7px 10px; font-size: 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+  .ed-street-item:last-child { border-bottom: none; }
+  .ed-street-item:hover { background: var(--blue-bg); }
+  .ed-street-item.editing { background: var(--orange); color: white; }
+  .ed-street-item.editing .pts { color: #fff; }
+  .ed-street-item .name { flex: 1; cursor: pointer; }
+  .ed-street-item .pts { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+  .ed-street-item.warn .name::after { content: " ⚠️"; color: var(--orange); }
+  .ed-street-item.empty .name::after { content: " ⭕"; color: var(--blue); }
+  .ed-street-item.polygon .name::before { content: "🏠 "; }
+  .ed-street-item .actions { display: flex; gap: 2px; align-items: center; }
+  .ed-street-item .actions button { cursor: pointer; border: 0; border-radius: 3px; background: transparent; color: var(--blue); padding: 2px 4px; font-size: 14px; }
+  .ed-street-item .actions button:hover { background: var(--blue-bg); }
+  .ed-street-item.editing .actions button { color: white; }
+  .ed-street-item.editing .actions button:hover { background: rgba(255,255,255,0.25); }
+  .ed-street-item .actions button:disabled { opacity: .35; cursor: default; }
+  .ed-street-item .actions span { cursor: pointer; padding: 2px 4px; border-radius: 3px; font-size: 12px; user-select: none; }
+  .ed-street-item .actions .up, .ed-street-item .actions .dn { color: var(--blue); }
+  .ed-street-item .actions .up:hover, .ed-street-item .actions .dn:hover { background: rgba(41,128,185,0.15); }
+  .ed-street-item .actions .edit { color: var(--orange); }
+  .ed-street-item .actions .rename { color: var(--blue); }
+  .ed-street-item .actions .del { color: var(--red); }
+  .ed-street-item.editing .actions span { color: white; }
+  .ed-street-item.editing .actions span:hover { background: rgba(255,255,255,0.25); }
+
+  .inline-rename { flex: 1; padding: 4px 8px; border: 1px solid var(--blue); border-radius: 4px; font-size: 12px; background: var(--panel); color: var(--text); }
+
+  .ep-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .ep-info { font-size: 11px; color: var(--text-muted); margin-top: 6px; padding: 6px 8px; background: var(--panel-2); border-radius: 4px; border-left: 3px solid var(--blue); }
+
+  #modal-overlay { position: fixed; inset: 0; background: rgba(44,62,80,0.5); z-index: 5000; display: none; align-items: center; justify-content: center; }
+  #modal-overlay.open { display: flex; }
+  #modal-window { background: var(--panel); border-radius: 10px; width: 520px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); }
+  #modal-window .m-header { padding: 14px 18px; background: var(--blue); color: white; border-radius: 10px 10px 0 0; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+  #modal-window .m-header .close { cursor: pointer; font-size: 22px; line-height: 1; }
+  #modal-window .m-body { padding: 16px 18px; overflow-y: auto; }
+  #modal-window input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; font-size: 14px; margin-bottom: 10px; background: var(--panel); color: var(--text); }
+  .copy-list { max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; background: var(--panel-2); }
+  .copy-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; transition: background 0.15s; }
+  .copy-item:last-child { border-bottom: none; }
+  .copy-item:hover { background: var(--blue-bg); }
+  .copy-item .plate { font-weight: bold; color: var(--blue); min-width: 110px; }
+  .copy-item .model { color: var(--text); font-size: 12px; flex: 1; }
+  .copy-item .cat { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: var(--blue-bg); color: var(--blue); }
+
+  #new-street-modal { position: fixed; inset: 0; background: rgba(44,62,80,0.5); z-index: 5500; display: none; align-items: center; justify-content: center; }
+  #new-street-modal .nsm-content { background: var(--panel); border-radius: 10px; width: 460px; max-width: 95vw; box-shadow: var(--shadow-lg); }
+  #new-street-modal .nsm-header { padding: 14px 18px; background: var(--blue); color: white; border-radius: 10px 10px 0 0; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+  #new-street-modal .nsm-header .close { cursor: pointer; font-size: 22px; line-height: 1; }
+  #new-street-modal .nsm-body { padding: 16px 18px; }
+  #new-street-modal .nsm-field { margin-bottom: 14px; }
+  #new-street-modal .nsm-field label { display: block; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  #new-street-modal input[type=text] { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text); font-size: 14px; }
+  #new-street-modal .nsm-type-row { display: flex; gap: 8px; }
+  #new-street-modal .nsm-type-option { flex: 1; padding: 10px 12px; border: 2px solid var(--border); border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; transition: all 0.15s; }
+  #new-street-modal .nsm-type-option:hover { border-color: var(--blue-light); background: var(--blue-bg); }
+  #new-street-modal .nsm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  #new-street-modal .nsm-btn { padding: 9px 18px; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s; }
+  #new-street-modal .nsm-btn.gray { background: var(--gray); color: white; }
+  #new-street-modal .nsm-btn.green { background: var(--green); color: white; }
+
+  #toast { position: fixed; bottom: 20px; right: 20px; z-index: 6000; font-size: 13px; color: white; background: var(--blue); padding: 12px 18px; border-radius: 6px; display: none; box-shadow: var(--shadow-lg); max-width: 380px; line-height: 1.4; }
+  #toast.error { background: var(--red); }
+  #toast.success { background: var(--green); }
+  #toast.info { background: var(--blue); }
+
+  #legend { position: absolute; bottom: 20px; right: 20px; z-index: 1100; font-size: 11px; max-width: 240px; transition: all 0.2s ease; }
+  #legend .lg-fab { width: 44px; height: 44px; border-radius: 50%; background: var(--panel); border: 2px solid var(--blue); color: var(--blue); cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-md); transition: all 0.2s ease; position: relative; }
+  #legend .lg-fab:hover { background: var(--blue); color: white; transform: scale(1.05); }
+  #legend .lg-panel { display: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg); overflow: hidden; margin-bottom: 6px; max-height: 60vh; overflow-y: auto; }
+  #legend.open .lg-panel { display: block; }
+  #legend .lg-header { padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 12px; color: var(--text); }
+  #legend .lg-header .lg-close { cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; padding: 0 4px; }
+  #legend .lg-body { padding: 8px 12px; }
+  #legend .lg-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; color: var(--text); }
+  #legend .lg-swatch { width: 14px; height: 4px; border-radius: 2px; flex-shrink: 0; }
+  #legend .lg-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  #legend .lg-sep { border-top: 1px solid var(--border); margin: 5px 0; }
+  #legend .lg-title { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+
+  #onboarding-overlay { position: fixed; inset: 0; z-index: 7000; display: none; align-items: center; justify-content: center; background: rgba(44,62,80,.65); }
+  #onboarding-overlay.open { display: flex; }
+  #onboarding { width: 460px; max-width: 95vw; background: var(--panel); color: var(--text); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-lg); }
+  .ob-header { padding: 18px 24px; background: var(--blue); color: white; }
+  .ob-header h1 { margin: 0 0 6px; font-size: 20px; }
+  .ob-header p { margin: 0; font-size: 13px; }
+  .ob-body { padding: 24px; min-height: 170px; }
+  .ob-step { display: none; }
+  .ob-step.active { display: block; }
+  .ob-step h2 { font-size: 17px; }
+  .ob-illustration { font-size: 32px; }
+  .ob-dots { display: flex; justify-content: center; gap: 8px; }
+  .ob-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+  .ob-dots span.active { background: var(--blue); }
+  .ob-footer { padding: 16px 24px; display: flex; justify-content: space-between; }
+  .ob-btn { border: 0; border-radius: 5px; padding: 8px 12px; cursor: pointer; }
+  .ob-btn.primary { background: var(--blue); color: white; }
+
+  #history-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 360px; background: var(--panel); color: var(--text); z-index: 2500; box-shadow: -6px 0 24px rgba(41,128,185,0.15); display: none; flex-direction: column; border-left: 2px solid var(--border); }
+  #history-panel.open { display: flex; }
+  #history-panel .hp-header { padding: 14px 18px; background: var(--gray); color: white; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  #history-panel .hp-body { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  #history-panel .hp-item { padding: 10px 12px; border-left: 3px solid var(--blue); background: var(--panel-2); border-radius: 4px; margin-bottom: 8px; font-size: 12px; }
+  #history-panel .hp-item .hp-time { font-size: 10px; color: var(--text-muted); margin-bottom: 3px; }
+  #history-panel .hp-empty { text-align: center; color: var(--text-muted); font-size: 12px; padding: 30px 10px; }
+
+  #print-area { display: none; }
+
+  .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
+  .leaflet-popup-content b { color: var(--blue); }
+  .point-marker { width: 22px; height: 22px; border-radius: 50%; border: 2px solid white; background: var(--orange); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.35); cursor: grab; transition: transform 0.15s, box-shadow 0.15s; } .point-marker:hover { transform: scale(1.35); z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .point-marker:active { cursor: grabbing; transform: scale(1.2); }
+  .point-marker.active-group { background: var(--green); }
+  .point-marker.endpoint { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(41,128,185,0.3), 0 2px 6px rgba(0,0,0,0.35); }
+  .point-marker.connect-source { border-color: #2ecc71; box-shadow: 0 0 0 4px rgba(46,204,113,0.4), 0 2px 6px rgba(0,0,0,0.35); animation: pulse-connect 1s infinite; }
+  @keyframes pulse-connect { 0%,100% { box-shadow: 0 0 0 4px rgba(46,204,113,0.4), 0 2px 6px rgba(0,0,0,0.35); } 50% { box-shadow: 0 0 0 8px rgba(46,204,113,0.2), 0 2px 6px rgba(0,0,0,0.35); } }
+  .ed-toolbar { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+  .ed-toolbar button { padding: 4px 10px; font-size: 11px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); cursor: pointer; color: var(--text); }
+  .ed-toolbar button.active { background: var(--green); color: white; border-color: var(--green); }
+  .ed-toolbar button:hover:not(.active) { background: var(--blue-bg); }
+  #sidebar.expanded { width: 100%; max-width: 500px; }
+  #sidebar.expanded .sidebar-hideable { display: none; }
+
+  .photo-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 10000; cursor: zoom-out; opacity: 0; transition: opacity 0.2s ease; }
+  .photo-overlay.show { opacity: 1; }
+  .photo-overlay img { max-width: 90%; max-height: 90%; border-radius: 8px; object-fit: contain; box-shadow: 0 8px 32px rgba(0,0,0,0.5); cursor: default; }
+
+  #overlap-summary { display: none; position: fixed; bottom: 10px; left: 12px; z-index: 999; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; max-height: 300px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-size: 12px; min-width: 250px; }
+  #overlap-summary.show { display: block; }
+  #overlap-summary h4 { margin: 0 0 4px 0; font-size: 13px; color: var(--text); }
+  #overlap-summary .ov-item { margin: 3px 0; padding: 2px 0; border-bottom: 1px solid rgba(0,0,0,0.06); }
+  #overlap-summary .ov-item:last-child { border-bottom: none; }
+  #overlap-summary .ov-street { font-weight: 600; }
+  #overlap-summary .ov-plates { color: var(--text-muted); font-size: 11px; }
+  #overlap-summary .ov-color-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+  #overlap-summary .close-btn { float: right; cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; }
+  .leaflet-popup .ov-popup-title { font-weight: 700; font-size: 13px; margin-bottom: 4px; }
+  .leaflet-popup .ov-popup-plate { display: inline-block; padding: 1px 4px; border-radius: 3px; margin: 1px; font-size: 11px; color: #fff; }
+
+  #uchastok-panel { position: absolute; top: 10px; left: 12px; z-index: 1000; background: var(--panel); color: var(--text); border-radius: 8px; box-shadow: var(--shadow-lg); min-width: 240px; max-width: 320px; max-height: 500px; overflow-y: auto; font-family: inherit; border: 1px solid var(--border); }
+
+  .list-empty { padding: 24px 12px; text-align: center; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
+  .st-edit { border: 0; background: transparent; color: inherit; cursor: pointer; }
+  .list-empty button { display: block; margin: 12px auto 0; border: 1px solid var(--blue); border-radius: 6px; padding: 9px 12px; background: var(--panel); color: var(--blue); cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  :is(button, input, [role="button"], .cat-tab, .uch-btn, .card-more):focus-visible { outline: 3px solid var(--orange); outline-offset: 2px; }
+  #action-dialog[hidden] { display: none; }
+  #action-dialog { position: fixed; inset: 0; z-index: 11000; background: rgba(0,0,0,.6); display: grid; place-items: center; padding: 16px; }
+  .dialog-panel { width: min(100%, 440px); border-radius: 10px; background: var(--panel); color: var(--text); padding: 20px; box-shadow: var(--shadow-lg); }
+  .dialog-panel h2 { font-size: 18px; margin-bottom: 12px; }
+  .dialog-panel p { line-height: 1.5; }
+  .dialog-panel input:not([hidden]) { width: 100%; margin-top: 12px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .dialog-actions button { padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text); cursor: pointer; }
+  .dialog-actions .dialog-ok { background: var(--blue); border-color: var(--blue); color: white; }
+
+  @media print {
+    body > *:not(#print-area) { display: none !important; }
+    #print-area { display: block !important; padding: 20px; font-family: Arial, sans-serif; }
+    #print-area h1 { font-size: 20px; margin-bottom: 10px; color: #2980b9; }
+    #print-area table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #print-area th, #print-area td { border: 1px solid #999; padding: 6px 8px; text-align: left; }
+    #print-area th { background: #eaf4fc; color: #2980b9; }
+    body.printing-route-map > #app { display: block !important; position: absolute; top: 55px; left: 0; width: 100%; height: calc(100vh - 55px); }
+    body.printing-route-map #app > *:not(#map) { display: none !important; }
+    body.printing-route-map #map { display: block !important; width: 100% !important; height: 100% !important; }
+    body.printing-route-map #print-area { position: absolute; top: 0; left: 0; }
+  }
+
+  @media (max-width: 900px) {
+    #sidebar { position: absolute; top: 0; left: 0; bottom: 0; z-index: 1400; width: 300px; min-width: 300px; box-shadow: var(--shadow-lg); }
+    #sidebar.collapsed { margin-left: -300px; }
+    #mini-route, #picker { width: calc(100vw - 24px); max-width: 440px; }
+    #editor-panel, #history-panel { width: 100%; max-width: 460px; }
+    #topbar .logo .logo-full { display: none; }
+    #topbar .top-btn span:not(.caret) { display: none; }
+  }
+  @media (max-width: 600px) {
+    :root { --topbar-h: auto; }
+    body { height: 100dvh; }
+    #topbar { min-height: 56px; height: auto; flex-wrap: wrap; gap: 4px; padding: 6px; }
+    #topbar .logo { font-size: 13px; }
+    #topbar .top-btn { min-width: 40px; min-height: 40px; justify-content: center; }
+    #save-status { display: none; }
+    #sidebar { width: min(100vw, 360px); min-width: 0; max-width: 100vw; }
+    #sidebar.collapsed { margin-left: calc(-1 * min(100vw, 360px)); }
+    #sidebar-header .count { padding-right: 24px; line-height: 1.6; }
+    .cat-actions { flex-wrap: wrap; }
+    .cat-actions button { min-height: 40px; }
+    .uch-btn { width: 40px; height: 40px; }
+    #mini-route, #picker { left: 6px; right: 6px; top: 6px; width: auto; max-width: none; max-height: calc(100dvh - 80px); }
+    #modal-window, .dialog-panel { max-height: 90dvh; overflow-y: auto; }
+  }
+</style>
+</head>
+<body>
+  
+<div id="topbar">
+  <div class="logo">🚜 <span class="logo-full">Жилищник · Тропарёво-Никулино</span></div>
+  <span id="mode-badge" class="view" title="Режим работы: только просмотр">👁 Просмотр</span>
+  <button class="top-btn" onclick="toggleSidebar()" title="Показать/скрыть список техники">📋 <span class="logo-full">Список</span></button>
+  <div class="spacer"></div>
+  <time id="live-clock" aria-label="Текущие дата и время"></time>
+  <span id="save-status" title="Все изменения сохранены">💾 Сохранено</span>
+  <button class="top-btn gray" onclick="toggleEditor()" title="Нарисовать или исправить геометрию улиц и дворов">🛣 <span class="logo-full">Улицы и дворы</span></button>
+
+  <div class="dropdown" id="dd-tools">
+    <button class="top-btn gray" onclick="toggleDropdown('dd-tools')" title="Дополнительные инструменты">
+      🛠 <span class="logo-full">Инструменты</span> <span class="caret">▼</span>
+    </button>
+    <div class="dropdown-menu">
+      <div class="dm-title">Данные</div>
+      <div class="dm-item" onclick="openHistory()" title="История изменений">📜 <span>История изменений</span></div>
+      <div class="dm-sep"></div>
+      <div class="dm-title">Импорт / Экспорт</div>
+      <div class="dm-item" onclick="exportCSV()">📊 <span>Экспорт CSV</span></div>
+      <div class="dm-item" onclick="exportHTML()">💾 <span>Экспорт HTML</span></div>
+      <div class="dm-item" onclick="exportAIContext()">🧠 <span>Выгрузка для ИИ (один файл)</span></div>
+      <div class="dm-item" onclick="document.getElementById('import-file').click()">📥 <span>Импорт HTML</span></div>
+      <div class="dm-item" onclick="printRoutes()">🖨 <span>Печать сводки</span></div>
+      <div class="dm-hint">💡 Данные хранятся локально в браузере.<br>Для переноса используйте Экспорт HTML.</div>
+      <div class="dm-sep"></div>
+      <div class="dm-item" onclick="toggleTheme()">🌓 <span>Тема</span></div>
+      <div class="dm-sep"></div>
+      <button type="button" class="dm-item danger" onclick="resetAll()">⚠️ <span>Сбросить всё</span></button>
+    </div>
+  </div>
+
+  <button class="top-btn gray" id="help-btn" onclick="startOnboarding()" title="Помощь">❓</button>
+  <button class="top-btn gray" id="edit-mode-btn" onclick="toggleEditMode()" title="Включить режим редактирования">✏️ <span>Редактировать</span></button>
+  <button class="top-btn primary" onclick="saveData(true)" title="Сохранить">💾 <span>Сохранить</span></button>
+</div>
+
+<input type="file" id="import-file" style="display:none" accept=".html,.htm" onchange="importHTML(event)" />
+
+<div id="app">
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h2>
+        <span>📋 Техника</span>
+        <span class="close-side" onclick="toggleSidebar()">✖</span>
+      </h2>
+      <button class="expand-btn" onclick="toggleExpandSidebar()" id="expand-btn" title="Развернуть/свернуть панель">⛶</button>
+      <div class="count">Всего: <b id="total-count">0</b> | <button id="on-route-count" type="button" onclick="toggleRouteFilter()" aria-pressed="false" title="Показать только технику с маршрутом">С маршрутом: 0</button> | Показано: <span id="shown-count">0</span></div>
+
+      <!-- Режимы маршрутов и наложения скрыты до реализации отрисовки маршрутов на карте. -->
+    </div>
+
+    <div class="category-tabs sidebar-hideable">
+      <button class="cat-tab" data-cat="odh" onclick="setCategory('odh')" title="Дорожная техника (ОДХ)">ОДХ<span class="cnt" id="cnt-odh">0</span></button>
+      <button class="cat-tab" data-cat="dvory" onclick="setCategory('dvory')" title="Техника для дворов">Дворы<span class="cnt" id="cnt-dvory">0</span></button>
+      <button class="cat-tab" data-cat="other" onclick="setCategory('other')" title="Полный список техники">Вся техника<span class="cnt" id="cnt-other">0</span></button>
+    </div>
+
+    <div class="uchastok-buttons sidebar-hideable" id="uchastok-buttons">
+      <span class="uch-label">Участок:</span>
+      <button class="uch-btn" data-u="1" onclick="selectUchastok(1)" aria-label="Участок 1" aria-pressed="false">1</button>
+      <button class="uch-btn" data-u="2" onclick="selectUchastok(2)" aria-label="Участок 2" aria-pressed="false">2</button>
+      <button class="uch-btn" data-u="3" onclick="selectUchastok(3)" aria-label="Участок 3" aria-pressed="false">3</button>
+      <button class="uch-btn" data-u="4" onclick="selectUchastok(4)" aria-label="Участок 4" aria-pressed="false">4</button>
+      <button class="uch-btn" data-u="5" onclick="selectUchastok(5)" aria-label="Участок 5" aria-pressed="false">5</button>
+      <button class="uch-btn" data-u="6" onclick="selectUchastok(6)" aria-label="Участок 6" aria-pressed="false">6</button>
+      <button class="panel-open-btn" id="uch-open-btn" onclick="manualOpenUchastok()" style="display:none;">📋 Открыть панель участка</button>
+    </div>
+
+    <div class="cat-actions sidebar-hideable">
+      <button class="btn-add" onclick="openAddToCategory()" title="Добавить технику в категорию">➕ В категорию</button>
+      <button class="btn-rem" onclick="removeFromCategory()" title="Убрать отмеченные">🗑 Убрать</button>
+      <button class="btn-all" onclick="toggleSelectAll()" title="Отметить найденные машины, включая свёрнутые группы">☑️ Выбрать найденные</button>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="search" placeholder="🔍 Поиск: госномер, модель, тип..." oninput="onSearchInput()" autocomplete="off" />
+      <div id="search-suggest"></div>
+    </div>
+
+    <div id="machine-list"></div>
+  </div>
+
+  <div id="map"></div>
+  <button id="sidebar-toggle" onclick="toggleSidebar()">📋 Список техники</button>
+
+  <div id="legend">
+    <div class="lg-panel">
+      <div class="lg-header">
+        <span>📖 Легенда</span>
+        <span class="lg-close" onclick="toggleLegend()" title="Свернуть">✖</span>
+      </div>
+      <div class="lg-body">
+        <div class="lg-title">Категории</div>
+        <div class="lg-row"><span class="lg-swatch" style="background:#e74c3c"></span> ОДХ (дороги)</div>
+        <div class="lg-row"><span class="lg-swatch" style="background:#2980b9"></span> Дворы</div>
+        <div class="lg-row"><span class="lg-swatch" style="background:#27ae60"></span> Вся техника</div>
+        <div class="lg-sep"></div>
+        <div class="lg-title">Участки дворов</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#e74c3c"></span> 1</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#2980b9"></span> 2</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#27ae60"></span> 3</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#e67e22"></span> 4</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#8e44ad"></span> 5</div>
+        <div class="lg-row"><span class="lg-dot" style="background:#1abc9c"></span> 6</div>
+        <div class="lg-sep"></div>
+        <div class="lg-title">На карте</div>
+        <div class="lg-row"><span class="lg-swatch" style="background:#e74c3c"></span> Маршрут техники</div>
+        <div class="lg-row"><span style="font-size:12px">🛣</span> Улица</div>
+        <div class="lg-row"><span style="font-size:12px">🏠</span> Двор (полигон)</div>
+      </div>
+    </div>
+    <div class="lg-fab" onclick="toggleLegend()" title="Показать легенду">📖</div>
+  </div>
+
+  <div id="mini-route">
+    <div class="mr-header">
+      <span id="mr-title">Маршрут</span>
+      <span class="close" onclick="closeMiniRoute()">&times;</span>
+    </div>
+    <div class="route-tabs-wrap">
+      <div class="route-tabs" id="route-tabs"></div>
+    </div>
+    <div class="mr-body">
+      <div class="mr-info" id="mr-info"></div>
+      <h3>Точки маршрута</h3>
+      <div class="mr-list" id="mr-list"></div>
+      <div class="mr-actions">
+        <button class="mr-btn green" onclick="openPicker()" title="Добавить улицы/дворы">➕ Добавить</button>
+        <button class="mr-btn orange" onclick="copyRouteFrom()" title="Скопировать маршрут">📋 Копировать</button>
+        <button class="mr-btn red" onclick="clearActiveRoute()" title="Очистить">🗑 Очистить</button>
+        <button class="mr-btn orange" id="route-edit-btn" onclick="toggleRouteEditing()" title="Рисовать и редактировать фигуры маршрута на карте">✏️ Геометрия маршрута</button>
+        <button class="mr-btn primary" onclick="printRoute()" title="Распечатать таблицу точек маршрута">🖨 Печать маршрута</button>
+        <button class="mr-btn primary" onclick="printMapOnly()" title="Открыть карту в новом окне и распечатать">🖨 Печать карты</button>
+        <button class="mr-btn gray" onclick="closeMiniRoute()">✖ Закрыть</button>
+      </div>
+      <p id="route-edit-hint" hidden>На карте: щелчок по линии — правка точек; инструменты сверху слева — линия, полигон, перемещение, удаление. Точку удаляют правым щелчком.</p>
+    </div>
+  </div>
+
+  <div id="picker">
+    <div class="p-header">
+      <span id="picker-title">Добавить в маршрут</span>
+      <span class="close" onclick="closePicker()">&times;</span>
+    </div>
+    <div class="p-body">
+      <input type="text" id="picker-search" placeholder="Поиск улицы или двора..." oninput="renderPicker()" />
+      <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted); margin-bottom:4px;">
+        <input type="checkbox" id="picker-hide-empty" onchange="renderPicker()" /> Скрыть пустые объекты
+      </label>
+      <div class="picker-list" id="picker-streets"></div>
+      <div class="p-actions">
+        <button class="mr-btn primary" onclick="closePicker()">✔ Готово</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editor-panel">
+    <div class="ep-header">
+      <span>🛠 Редактор улиц и дворов</span>
+      <span class="close" onclick="toggleEditor()">&times;</span>
+    </div>
+    <div class="ep-body" style="display:flex; flex-direction:column;">
+      <h3>
+        <span>Улицы и дворы</span>
+        <span><button type="button" class="ed-btn mini" onclick="addEditorObject(false)">+ Улица</button> <button type="button" class="ed-btn mini" onclick="addEditorObject(true)">+ Участок</button></span>
+      </h3>
+      <div class="row">
+        <input type="text" id="ed-street-search" placeholder="Поиск объекта..." oninput="renderEditorStreets()" />
+      </div>
+      <div class="ed-street-list" id="ed-street-list" style="flex:1; min-height: 200px; margin-bottom: 10px;"></div>
+
+      <div class="ep-info" id="ed-info" style="margin-bottom: 10px;">Выберите объект из списка, чтобы изменить его геометрию.</div>
+      
+
+    </div></div>
+  </div>
+
+  <div id="history-panel">
+    <div class="hp-header">
+      <span>📜 История изменений</span>
+      <span class="close" onclick="closeHistory()">&times;</span>
+    </div>
+    <div class="hp-body" id="history-body"></div>
+  </div>
+</div>
+
+<div id="action-dialog" hidden>
+  <div class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="action-dialog-title" aria-describedby="action-dialog-message">
+    <h2 class="dialog-title" id="action-dialog-title"></h2>
+    <p class="dialog-message" id="action-dialog-message"></p>
+    <input type="text" aria-label="Значение" hidden />
+    <div class="dialog-actions"><button type="button" class="dialog-cancel">Отмена</button><button type="button" class="dialog-ok">Продолжить</button></div>
+  </div>
+</div>
+
+<div id="modal-overlay">
+  <div id="modal-window">
+    <div class="m-header">
+      <span id="modal-title">Добавить в категорию</span>
+      <span class="close" onclick="closeModal()">&times;</span>
+    </div>
+    <div class="m-body">
+      <input type="text" id="modal-search" placeholder="Поиск: госномер или модель..." oninput="renderModalList(this.value)" />
+      <div class="copy-list" id="modal-list"></div>
+    </div>
+  </div>
+</div>
+
+<div id="new-street-modal">
+  <div class="nsm-content">
+    <div class="nsm-header">
+      <span>➕ Новый объект</span>
+      <span class="close" onclick="closeNewStreetModal()">&times;</span>
+    </div>
+    <div class="nsm-body">
+      <div class="nsm-field">
+        <label>Название:</label>
+        <input type="text" id="nsm-name" placeholder="Например: улица Рузская" />
+      </div>
+      <div class="nsm-field">
+        <label>Тип объекта:</label>
+        <div class="nsm-type-row">
+          <label class="nsm-type-option"><input type="radio" name="nsm-type" value="line" checked /> <span>🛣 Улица</span></label>
+          <label class="nsm-type-option"><input type="radio" name="nsm-type" value="polygon" /> <span>🏠 Двор</span></label>
+        </div>
+      </div>
+      <div class="nsm-field" id="nsm-area-field" style="display:none;">
+        <label>Участок:</label>
+        <select id="nsm-area" style="width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:4px; background:var(--panel); color:var(--text); font-size:14px;">
+          <option value="">— без участка —</option>
+          <option value="1уч">Участок 1</option>
+          <option value="2уч">Участок 2</option>
+          <option value="3уч">Участок 3</option>
+          <option value="4уч">Участок 4</option>
+          <option value="5уч">Участок 5</option>
+          <option value="6уч">Участок 6</option>
+          <option value="парки">Парки</option>
+        </select>
+      </div>
+      <div class="nsm-actions">
+        <button class="nsm-btn gray" onclick="closeNewStreetModal()">Отмена</button>
+        <button class="nsm-btn green" onclick="confirmNewStreet()">Создать</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="onboarding-overlay">
+  <div id="onboarding">
+    <div class="ob-header">
+      <h1>👋 Добро пожаловать!</h1>
+      <p>Карта техники Жилищника — Тропарёво-Никулино</p>
+    </div>
+    <div class="ob-body">
+      <div class="ob-step active" data-step="0">
+        <div class="ob-illustration">🗺</div>
+        <h2>Что это за приложение?</h2>
+        <p>Интерактивная карта маршрутов уборочной и дорожной техники. Смотреть — без регистрации, редактировать — в режиме «✏️ Редактировать».</p>
+      </div>
+      <div class="ob-step" data-step="1">
+        <div class="ob-illustration">📋</div>
+        <h2>Список техники</h2>
+        <p>Слева — все машины, сгруппированы по подтипам.</p>
+      </div>
+      <div class="ob-step" data-step="2">
+        <div class="ob-illustration">🎯</div>
+        <h2>Категории и участки</h2>
+        <p>Сверху — ОДХ / Дворы / Вся техника. Кнопки <b>1–6</b> фильтруют по участкам.</p>
+      </div>
+      <div class="ob-step" data-step="3">
+        <div class="ob-illustration">🚜</div>
+        <h2>Маршруты</h2>
+        <p>У машины может быть до 5 маршрутов. Кнопки печати: <b>🖨 Печать маршрута</b> и <b>🖨 Печать карты</b>.</p>
+      </div>
+      <div class="ob-step" data-step="4">
+        <div class="ob-illustration">✏️</div>
+        <h2>Редактор</h2>
+        <p>Включается кнопкой <b>«✏️ Редактировать»</b>. Выберите объект на карте — точки можно перетаскивать.</p>
+      </div>
+    </div>
+    <div class="ob-dots" id="ob-dots">
+      <span class="active"></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="ob-footer">
+      <button class="ob-btn skip" onclick="skipOnboarding()">Пропустить</button>
+      <div style="display:flex; gap:8px;">
+        <button class="ob-btn gray" id="ob-prev" onclick="onboardingPrev()" style="display:none;">← Назад</button>
+        <button class="ob-btn primary" id="ob-next" onclick="onboardingNext()">Далее →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+<div id="print-area"></div>
+
+<div id="overlap-summary">
+  <span class="close-btn" onclick="document.getElementById('overlap-summary').classList.remove('show')">&times;</span>
+  <h4>🔀 Наложения маршрутов</h4>
+  <div id="overlap-summary-content"></div>
+</div>
+
+<div id="subtype-context-menu" style="position:fixed; z-index:10000; background:var(--panel); border:1px solid var(--border); border-radius:6px; box-shadow:var(--shadow-md); padding:6px 0; min-width:200px; display:none;">
+  <div style="padding:6px 12px; font-size:11px; color:var(--text-muted); font-weight:bold; border-bottom:1px solid var(--border); margin-bottom:4px;">Подтип техники</div>
+  <div id="scm-items"></div>
+  <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
+  <div style="padding:6px 12px;">
+    <input type="text" id="scm-new-input" placeholder="Новый подтип..." style="width:100%; border:1px solid var(--border); border-radius:4px; padding:4px 8px; font-size:12px; background:var(--panel); color:var(--text);" onkeydown="if(event.key==='Enter'){scmCreateNew();}">
+    <button onclick="scmCreateNew()" style="margin-top:4px;width:100%;padding:4px;background:var(--blue);color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;">+ Создать</button>
+  </div>
+  <div style="border-top:1px solid var(--border); margin:4px 0;"></div>
+  <div style="padding:6px 12px; font-size:12px; cursor:pointer; color:#e74c3c;" onclick="scmRemoveSubtype()">✕ Убрать подтип</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+import { initMap } from './src/map.js';
+import { runDiagnostics } from './src/diagnostics.js';
+import { renderList, setCategory, updateCategoryCounts, onSearchInput, bindCategoryRouteHover } from './src/ui.js';
+import { openAddToCategory, removeFromCategory, renderModalList, showSubtypeMenu, scmCreateNew, scmRemoveSubtype, scmAssignSubtype, renameSubtype } from './src/machine-actions.js';
+import { exportAIContext } from './src/ai-export.js';
+import { saveCurrentObject, toggleEditor, toggleDrawingMode, updateToolbarButtons, saveEditedStreet, clearEditorDraw, cancelEditing, addExtraLine, startDrawMode, addEditorObject } from './src/editor.js';
+import { toggleSidebar, toggleDropdown, toggleTheme, resetAll, toggleEditMode, openHistory, exportCSV, startOnboarding, onboardingNext, onboardingPrev, exportHTML, printRoutes, undoLastAction, saveData, toggleExpandSidebar, toggleRouteFilter, clearMachineFilters, selectUchastok, toggleLegend, toggleSelectAll, toggleForShow, loadData } from './src/ui-controls.js';
+import { openMiniRoute, closeMiniRoute, renderRouteTabs, renderMiniRoute, switchRoute, moveTab, moveRoutePoint, removeFromMiniRoute, clearActiveRoute, copyRouteFrom, openPicker, closePicker, renderPicker, printRoute, printMapOnly, toggleRouteEditing } from './src/routes.js';
+
+Object.assign(window, { runDiagnostics, saveCurrentObject, setCategory, toggleEditor, toggleDrawingMode, updateToolbarButtons, saveEditedStreet, clearEditorDraw, cancelEditing, addExtraLine, startDrawMode, addEditorObject, onSearchInput, renderList, updateCategoryCounts,
+  toggleSidebar, toggleDropdown, toggleTheme, resetAll, toggleEditMode, openHistory, exportCSV, startOnboarding, onboardingNext, onboardingPrev, exportHTML, printRoutes, undoLastAction, saveData, toggleExpandSidebar, toggleRouteFilter, clearMachineFilters, selectUchastok, toggleLegend, toggleSelectAll, toggleForShow, loadData,
+  openMiniRoute, closeMiniRoute, renderRouteTabs, renderMiniRoute, switchRoute, moveTab, moveRoutePoint, removeFromMiniRoute, clearActiveRoute, copyRouteFrom, openPicker, closePicker, renderPicker, printRoute, printMapOnly, toggleRouteEditing,
+  openAddToCategory, removeFromCategory, renderModalList, showSubtypeMenu, scmCreateNew, scmRemoveSubtype, scmAssignSubtype, renameSubtype, exportAIContext
+});
+
+window.closeHistory        = () => document.getElementById('history-panel')?.classList.remove('open');
+window.closeModal          = () => document.getElementById('modal-overlay')?.classList.remove('open');
+window.closeNewStreetModal = () => { const el = document.getElementById('new-street-modal'); if (el) el.style.display = 'none'; };
+window.skipOnboarding      = () => { document.getElementById('onboarding-overlay')?.classList.remove('open'); };
+
+const todo = (n) => () => console.warn('[TODO] ' + n);
+Object.assign(window, {
+  manualOpenUchastok: todo('manualOpenUchastok'),
+  addNewStreet: todo('addNewStreet'),
+});
+
+function boot() {
+  const clock = document.getElementById('live-clock');
+  const updateClock = () => { clock.textContent = new Date().toLocaleString('ru-RU'); clock.dateTime = new Date().toISOString(); };
+  updateClock(); setInterval(updateClock, 1000);
+  initMap();
+  bindCategoryRouteHover();
+  loadData();
+  import('./src/state.js').then(m => { if (m.activeUchastok !== null) { const b = document.querySelector(`.uch-btn[data-u="${m.activeUchastok}"]`); b?.classList.add('active'); b?.setAttribute('aria-pressed', 'true'); } });
+  import('./src/editor.js').then(m => m.loadStreetsFromStorage());
+  setCategory('dvory', false);
+  renderList();
+  updateCategoryCounts();
+
+  import('./src/state.js').then(m => m.updateUndoButton());
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      import('./src/editor.js').then(m => m.cancelEditing());
+    }
+  });
+
+  if (new URLSearchParams(location.search).has('debug')) {
+    setTimeout(() => { if (window.runDiagnostics) window.runDiagnostics(); }, 1000);
+  }
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+</script>
+</body>
+</html>

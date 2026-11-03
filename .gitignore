@@ -1,0 +1,15 @@
+﻿# Python
+__pycache__/
+*.pyc
+venv/
+.env
+bot/credentials.json
+bot/last_seen_cache.json
+
+# Node.js
+map/node_modules/
+map/.git
+
+# System
+.DS_Store
+Thumbs.db

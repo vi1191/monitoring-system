@@ -1,0 +1,25 @@
+{
+  "env": {
+    "browser": true,
+    "es2022": true,
+    "node": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module"
+  },
+  "globals": {
+    "L": "readonly",
+    "CSS": "readonly"
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-undef": "error",
+    "no-redeclare": "error",
+    "no-dupe-keys": "error",
+    "no-unreachable": "error",
+    "eqeqeq": ["warn", "smart"],
+    "no-var": "warn",
+    "prefer-const": "warn"
+  }
+}
