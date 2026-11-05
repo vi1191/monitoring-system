@@ -15,8 +15,8 @@ from PyQt6.QtWidgets import (
     QRadioButton, QHeaderView, QLineEdit, QFileDialog, QDialog, QFormLayout,
     QDateEdit, QSplitter
 )
-from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import Qt, QDate, QTimer
+from PyQt6.QtGui import QColor, QFont, QPainter
 from bot_worker import BotWorker
 
 try:
@@ -216,6 +216,16 @@ class SettingsDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить данные: {e}")
 
+class MultiHeaderTableWidget(QTableWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.verticalHeader().setVisible(False)
+        self.horizontalHeader().setFixedHeight(50)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.columnCount() == 0:
+            return
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -226,8 +236,23 @@ class MainWindow(QMainWindow):
             QTableWidget { background-color: white; gridline-color: #e2e8f0; }
             QTableWidget::item { padding-left: 9px; padding-right: 7px; }
             QTableWidget::item:selected { color: #17212b; background-color: #a8d4f2; }
-            QHeaderView::section { background-color: #e8edf3; padding: 8px;
-                                   border: 1px solid #d4dce6; font-weight: bold; }
+            
+            /* Стандартный вид ВСЕХ заголовков */
+            QHeaderView::section { 
+                background-color: #e8edf3; 
+                padding: 8px;
+                border: 1px solid #d4dce6; 
+                font-weight: bold; 
+            }
+            
+            /* Особый цвет для заголовков колонок топлива (5, 6, 7) */
+            QHeaderView::section:nth-child(5), 
+            QHeaderView::section:nth-child(6), 
+            QHeaderView::section:nth-child(7) {
+                background-color: #fdf6e3; 
+                border: 1px solid #e2d5b8;
+            }
+            
             QPushButton { padding: 8px 15px; border-radius: 4px; background-color: #f0f0f0; border: 1px solid #ccc; }
             QPushButton:hover { background-color: #e0e0e0; }
         ''')
@@ -250,6 +275,11 @@ class MainWindow(QMainWindow):
         self.btn_settings = QPushButton('Доступы')
         self.btn_settings.setFixedHeight(40)
         self.btn_settings.clicked.connect(self.open_settings)
+
+                # --- ТАЙМЕР АВТООБНОВЛЕНИЯ ---
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.auto_update)
+        self.timer.start(300000)  # 300000 мс = 5 минут
 
         # --- НОВАЯ КНОПКА ---
         self.btn_estp = QPushButton('Сформировать заявки в ЕСТП')
@@ -294,25 +324,35 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(search_layout)
 
         self.table = QTableWidget()
+        # 1. Устанавливаем колонки
         headers = [
-            'Выбор', 'Номер ТС', 'Марка', 'Задание', 'Выполнено %', 
-            'Топливо (Выезд)', 'Заправка (ЕТС)', 'Топливо (Факт)', 'Пробег, км',
-            'Связь / трек', 'Детали'
+            '✓', 'Номер ТС', 'Марка', 'Задание', 'Вып.\n%', 
+            'Топливо\nвыезд', 'Топливо\nзаправка', 'Топливо\nфакт', 
+            'Пробег,\nкм', 'Связь /\nтрек', 'Детали'
         ]
         self.table.setColumnCount(len(headers))
+        
+        # --- ВОЗВРАЩАЕМ СТАНДАРТНУЮ ШАПКУ ---
         self.table.setHorizontalHeaderLabels(headers)
         
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
-        header.setMinimumSectionSize(60)
+        header.setMinimumSectionSize(40)
+        header.setFixedHeight(50) # Задаем высоту шапки, чтобы влезли две строки
         
-        widths = (50, 120, 150, 110, 110, 120, 130, 120, 90, 200, 300)
+        # --- ШИРИНА КОЛОНОК ---
+        widths = (30, 100, 140, 100, 45, 80, 100, 90, 80, 180, 250)
         for col, width in enumerate(widths):
             self.table.setColumnWidth(col, width)
+
+        # ВАЖНО: Поскольку у нас две строки заголовков, нужно добавить подзаголовки для топлива.
+        # В QTableWidget это делается через кастомный делегат, но проще всего 
+        # добавить их как обычные QLabel поверх, либо использовать трюк с первой строкой данных.
+        # Но мы пойдем самым надежным путем: настроим текст в заголовках через QTableWidgetItem.
             
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.verticalHeader().setDefaultSectionSize(40)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setWordWrap(False)
@@ -322,6 +362,7 @@ class MainWindow(QMainWindow):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.installEventFilter(self)
+        self.table.itemSelectionChanged.connect(self.on_row_selected)
         
         # ---------- СПЛИТТЕР (Таблица слева, Карта справа) ----------
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -345,7 +386,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.splitter, 1)
         
         # Запуск сервера
-        self.server_thread = LocalServerThread(directory="../map_clean", port=8000)
+                # Вычисляем абсолютный путь к папке map_clean относительно текущего файла gui.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        map_path = os.path.join(current_dir, "..", "map_clean")
+        
+        self.server_thread = LocalServerThread(directory=map_path, port=8000)
         self.server_thread.start()
         time.sleep(0.5)
         self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html"))
@@ -376,6 +421,7 @@ class MainWindow(QMainWindow):
 
         self.worker = None
         self.is_running = False
+        self.start_collection()  # Сразу начинаем сбор при запуске
 
     def open_settings(self):
         dialog = SettingsDialog(self)
@@ -426,8 +472,23 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, 'Ошибка', message)
         self.btn_refresh.setEnabled(True)
         self.is_running = False
+        self.timer.start(300000)  # Перезапускаем таймер даже при ошибке
 
     def populate_table(self, cars):
+        self.cars_data = cars  # Сохраняем данные, чтобы брать из них треки
+        
+        # --- ОТЛАДКА: Ищем машину с треком ---
+        if cars:
+            for i, c in enumerate(cars):
+                track = c.get('_track_raw')
+                if track:
+                    print(f"МАШИНА {i} ({c.get('gov_number')}) ИМЕЕТ ТРЕК. Длина: {len(track)}")
+                    print(f"ПЕРВЫЕ 3 ТОЧКИ: {track[:3]}")
+                    break
+            else:
+                print("НИ У ОДНОЙ МАШИНЫ НЕТ ТРЕКА")
+        # ---------------------------------------
+        
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(cars))
         bold = QFont(self.table.font())
@@ -452,14 +513,22 @@ class MainWindow(QMainWindow):
                 text = self.display_value(value) if col != 0 else ''
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
+                
+                # 1. Сначала ставим стандартный цвет (зеленый/красный)
                 item.setBackground(color)
+
                 if col == 1:
                     item.setFont(bold)
-                if col in (4, 5, 6, 7, 8):   # числовые колонки
+                    
+                # Выравнивание для числовых колонок (включая топливо)
+                if col in (4, 5, 6, 7, 8):   
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    
                 if col == 0:
                     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
                     item.setCheckState(Qt.CheckState.Unchecked)
+                    
+                self.table.setRowCount(len(cars)) # (или self.table.setItem(row, col, item))
                 self.table.setItem(row, col, item)
 
         self.table.setSortingEnabled(True)
@@ -467,6 +536,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f'Загружено машин: {len(cars)}')
         self.btn_refresh.setEnabled(True)
         self.is_running = False
+        self.timer.start(300000)  # Перезапускаем таймер на 5 минут
 
     def filter_rows(self):
         query = self.search_input.text().strip().casefold()
@@ -592,6 +662,43 @@ class MainWindow(QMainWindow):
                 print(f"Ошибка: {e}")
 
         threading.Thread(target=run_bot, daemon=True).start()
+
+    def on_row_selected(self):
+        selected_rows = self.table.selectedItems()
+        if not selected_rows:
+            return
+        row = selected_rows[0].row()
+        
+        # Берем номер машины из таблицы (для отображения)
+        car_number = self.table.item(row, 1).text()
+        
+        # Ищем эту машину в сохраненных данных, чтобы достать трек
+        car_track = []
+        if hasattr(self, 'cars_data') and row < len(self.cars_data):
+            car_data = self.cars_data[row]
+            car_track = car_data.get('_track_raw', [])
+                        # Превращаем список словарей в простой список координат
+            if car_track:
+                car_track = [point['coords'] for point in car_track if 'coords' in point]
+        
+        if not car_track:
+            self.lbl_status.setText(f"Машина {car_number}: нет данных о треке")
+            return
+            
+        self.lbl_status.setText(f"Машина {car_number}: отрисовка трека...")
+        
+        # Передаем реальные координаты в JavaScript
+        import json
+        coords_json = json.dumps(car_track)
+        js_code = f"window.drawTrack({coords_json}, '{car_number}');"
+        self.web_view.page().runJavaScript(js_code)
+
+    def auto_update(self):
+        # Если сбор уже идет, пропускаем этот тик
+        if self.is_running:
+            return
+        # Если не идет, запускаем сбор
+        self.start_collection()
 
     def closeEvent(self, event):
         if hasattr(self, 'server_thread'):

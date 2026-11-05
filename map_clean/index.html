@@ -39,6 +39,39 @@
         
         // Для проверки добавим тестовую машину
         window.addVehicle(55.65, 37.45, "Тестовая машина", "В движении");
+
+        // --- НОВЫЕ ФУНКЦИИ ДЛЯ ОТРИСОВКИ ТРЕКА ---
+
+        // Функция для очистки карты (чтобы при клике на новую машину старый трек исчезал)
+        window.clearMap = function() {
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.Polyline || layer instanceof L.Marker) {
+                    map.removeLayer(layer);
+                }
+            });
+        };
+
+        // Функция для отрисовки трека (принимает массив координат)
+        window.drawTrack = function(coordsArray, carName) {
+            window.clearMap(); // Очищаем старый трек
+            
+            if (!coordsArray || coordsArray.length === 0) return;
+
+            // Рисуем линию
+            var polyline = L.polyline(coordsArray, {
+                color: 'blue',
+                weight: 4,
+                opacity: 0.7
+            }).addTo(map);
+
+            // Ставим маркер на последнюю точку (текущее положение)
+            var lastPoint = coordsArray[coordsArray.length - 1];
+            var marker = L.marker(lastPoint).addTo(map);
+            marker.bindPopup(`<b>${carName}</b><br>Текущее положение`);
+
+            // Автоматически зумим карту так, чтобы был виден весь трек
+            map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+        };
     </script>
 </body>
 </html>
