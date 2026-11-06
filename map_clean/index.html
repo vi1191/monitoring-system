@@ -22,7 +22,7 @@
         var trackLayer = L.layerGroup().addTo(map);
 
         // 2. Загрузка правильных улиц из OSM
-        fetch('streets_osm.json?v=1') 
+        fetch('streets_clipped.json')
             .then(function(response) { return response.json(); })
             .then(function(data) {
                 console.log("Данные загружены. Найдено участков:", data.features ? data.features.length : 0);

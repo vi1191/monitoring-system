@@ -2,9 +2,15 @@
 __pycache__/
 *.pyc
 venv/
-.env
-bot/credentials.json
 bot/last_seen_cache.json
+last_seen_cache.json
+
+# Секреты
+credentials.json
+
+# громные выгрузки OSM
+map_clean/streets_osm.json
+map_clean/yards_osm.json
 
 # Node.js
 map/node_modules/
