@@ -2,74 +2,58 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Карта Мониторинга</title>
-    <!-- Подключаем стили Leaflet -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>Map</title>
     <style>
-        /* Карта на весь экран */
-        html, body, #map {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            background-color: #e5e5e5;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; }
+        #map { width: 100%; height: 100vh; }
     </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
-    <!-- Контейнер для карты -->
     <div id="map"></div>
 
-    <!-- Подключаем скрипт Leaflet -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Инициализация карты (центр на Москве)
-        var map = L.map('map').setView([55.65, 37.45], 12);
+        // 1. Инициализация карты
+        var map = L.map('map').setView([55.655, 37.485], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // Подложка (схема OSM)
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap'
-        }).addTo(map);
+        var streetsLayer = L.layerGroup().addTo(map);
+        var trackLayer = L.layerGroup().addTo(map);
 
-        // Функция для добавления маркеров (будем вызывать из Python)
-        window.addVehicle = function(lat, lon, name, status) {
-            var marker = L.marker([lat, lon]).addTo(map);
-            marker.bindPopup(`<b>${name}</b><br>Статус: ${status}`);
-        };
-        
-        // Для проверки добавим тестовую машину
-        window.addVehicle(55.65, 37.45, "Тестовая машина", "В движении");
-
-        // --- НОВЫЕ ФУНКЦИИ ДЛЯ ОТРИСОВКИ ТРЕКА ---
-
-        // Функция для очистки карты (чтобы при клике на новую машину старый трек исчезал)
-        window.clearMap = function() {
-            map.eachLayer(function(layer) {
-                if (layer instanceof L.Polyline || layer instanceof L.Marker) {
-                    map.removeLayer(layer);
+        // 2. Загрузка правильных улиц из OSM
+        fetch('streets_osm.json?v=1') 
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
+                console.log("Данные загружены. Найдено участков:", data.features ? data.features.length : 0);
+                
+                if (data.features) {
+                    data.features.forEach(function(feature) {
+                        if (feature.coords && feature.coords.length > 0) {
+                            
+                            // Рисуем линию (polyline), так как это дороги
+                            L.polyline(feature.coords, {
+                                color: '#3b82f6', // Синий цвет, как на картах
+                                weight: 3,
+                                opacity: 0.7
+                            }).bindTooltip(feature.name).addTo(streetsLayer);
+                        }
+                    });
+                    console.log("Улицы успешно отрисованы!");
                 }
+            })
+            .catch(function(error) { 
+                console.error('ОШИБКА ЗАГРУЗКИ:', error); 
             });
-        };
 
-        // Функция для отрисовки трека (принимает массив координат)
-        window.drawTrack = function(coordsArray, carName) {
-            window.clearMap(); // Очищаем старый трек
+        // 3. Функция для отрисовки треков машин (вызывается из Python)
+        window.drawTrack = function(coords, carNumber) {
+            trackLayer.clearLayers(); 
+            if (!coords || coords.length === 0) return;
             
-            if (!coordsArray || coordsArray.length === 0) return;
-
-            // Рисуем линию
-            var polyline = L.polyline(coordsArray, {
-                color: 'blue',
-                weight: 4,
-                opacity: 0.7
-            }).addTo(map);
-
-            // Ставим маркер на последнюю точку (текущее положение)
-            var lastPoint = coordsArray[coordsArray.length - 1];
-            var marker = L.marker(lastPoint).addTo(map);
-            marker.bindPopup(`<b>${carName}</b><br>Текущее положение`);
-
-            // Автоматически зумим карту так, чтобы был виден весь трек
+            var polyline = L.polyline(coords, { color: 'red', weight: 4, opacity: 0.8 }).addTo(trackLayer);
+            L.marker(coords[coords.length - 1]).bindPopup("Машина: " + carNumber).addTo(trackLayer);
+            
             map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
         };
     </script>
