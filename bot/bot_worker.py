@@ -4,6 +4,7 @@ import time
 import json
 import os
 import math
+import requests
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -162,7 +163,7 @@ class BotWorker(QThread):
 
                 # Пагинация больше не нужна - данные уже в потоке
                 log("INFO", "Журнал: данные получены из потока (пагинация не требуется)")
-                
+
                 # --- ПРЯМОЙ ЗАПРОС К API ДЛЯ ПОЛУЧЕНИЯ ВСЕХ МИССИЙ ---
                 # Берем токен из localStorage
                 raw_token = page.evaluate("() => localStorage.getItem('ets.mos.ru/-ets-session')")
@@ -325,57 +326,71 @@ class BotWorker(QThread):
                                 log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
                                 return {"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None}
 
-                        # Запускаем параллельно по 5 штук
-                        batch_size = 10
-                        for i in range(0, total_reqs, batch_size):
-                            batch = requests_js[i:i + batch_size]
-                            results = []
-                            for req in batch:
-                                try:
-                                    res = page.request.get(req["url"], headers={"Authorization": f"Token {token}"})
-                                    if res.status == 200:
-                                        json_data = res.json()
-                                        results.append({
-                                            "car_id": req["car_id"],
-                                            "status": 200,
-                                            "track": json_data.get("track", []),
-                                            "sensors_raw": json_data.get("cars_sensors"),
-                                            "ets_fuel_start": json_data.get("sensor_start_value"),
-                                            "ets_fuel_finish": json_data.get("sensor_finish_value"),
-                                            "ets_fuel_refill": json_data.get("sensor_refill"),
-                                            "raw_json": json_data
-                                        })
-                                    else:
-                                        results.append({"car_id": req["car_id"], "status": res.status, "track": [], "sensors_raw": None})
-                                except Exception as e:
-                                    log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
-                                    results.append({"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None})
-                            done = min(i + batch_size, total_reqs)
-                            self.status_msg.emit(f"Треки: {done}/{total_reqs}")
-                            
-                            for res in results:
-                                cid = res["car_id"]
-                                for car in target_cars:
-                                    if car["car_id"] == cid:
-                                        if res["status"] == 200:
-                                            car["track_points"] = len(res["track"])
-                                            car["_track_raw"] = res["track"]
-                                            car["_sensors_raw"] = res.get("sensors_raw")
-                                            car["_ets_fuel_start"] = res.get("ets_fuel_start")
-                                            car["_raw_json"] = res.get("raw_json")
-                                            car["_ets_fuel_finish"] = res.get("ets_fuel_finish")
-                                            car["_ets_fuel_refill"] = res.get("ets_fuel_refill")
-                                            car["_raw_json"] = res.get("raw_json")
-                                            tracks_ok += 1
-                                        else:
-                                            car["track_status"] = "Ошибка API"
-                                            car["track_detail"] = f"HTTP {res['status']}"
-                                            tracks_err += 1
-                                        break
-                            done = min(i + batch_size, total_reqs)
-                            self.status_msg.emit(f"Треки: {done}/{total_reqs}")
+                # --- ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ТРЕКОВ ---
+                import concurrent.futures
+
+                tracks_ok = 0
+                tracks_err = 0
+                batch_size = 10  # Сколько запросов отправлять одновременно
+
+                def fetch_one(req):
+                    try:
+                        res = requests.get(
+                            req["url"],
+                            headers={"Authorization": f"Token {token}"},
+                            timeout=60
+                        )
+                        if res.status_code == 200:
+                            json_data = res.json()
+                            return {
+                                "car_id": req["car_id"],
+                                "status": 200,
+                                "track": json_data.get("track", []),
+                                "sensors_raw": json_data.get("cars_sensors"),
+                                "ets_fuel_start": json_data.get("sensor_start_value"),
+                                "ets_fuel_finish": json_data.get("sensor_finish_value"),
+                                "ets_fuel_refill": json_data.get("sensor_refill"),
+                                "raw_json": json_data
+                            }
+                        else:
+                            return {"car_id": req["car_id"], "status": res.status_code, "track": [], "sensors_raw": None}
+                    except Exception as e:
+                        log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
+                        return {"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None}
+
+                # Запускаем запросы батчами по 10 штук (параллельно внутри батча)
+                for i in range(0, total_reqs, batch_size):
+                    batch = requests_js[i:i + batch_size]
+                    
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+                        futures = {executor.submit(fetch_one, req): req for req in batch}
                         
-                        stage("Треки")
+                        for future in concurrent.futures.as_completed(futures):
+                            res = future.result()
+                            cid = res["car_id"]
+                            
+                            for car in target_cars:
+                                if car["car_id"] == cid:
+                                    if res["status"] == 200:
+                                        car["track_points"] = len(res["track"])
+                                        car["_track_raw"] = res["track"]
+                                        car["_sensors_raw"] = res.get("sensors_raw")
+                                        car["_ets_fuel_start"] = res.get("ets_fuel_start")
+                                        car["_ets_fuel_finish"] = res.get("ets_fuel_finish")
+                                        car["_ets_fuel_refill"] = res.get("ets_fuel_refill")
+                                        car["_raw_json"] = res.get("raw_json")
+                                        tracks_ok += 1
+                                    else:
+                                        car["track_status"] = "Ошибка API"
+                                        car["track_detail"] = f"HTTP {res['status']}"
+                                        tracks_err += 1
+                                    break
+                    
+                    done = min(i + batch_size, total_reqs)
+                    self.status_msg.emit(f"Треки: {done}/{total_reqs}")
+
+                stage("Треки")
+                # ----------------------------------
 
                 browser.close()
 
