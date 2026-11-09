@@ -9,6 +9,7 @@ env/
 # Локальные данные и креды
 bot/credentials.json
 bot/cache.json
+bot/last_seen_cache.json
 map_clean/last_seen_cache.json
 
 # Node (legacy)
