@@ -472,7 +472,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, 'Ошибка', message)
         self.btn_refresh.setEnabled(True)
         self.is_running = False
-        self.timer.start(300000)  # Перезапускаем таймер даже при ошибке
+        self.timer.start(120000)  # Перезапускаем таймер даже при ошибке
 
     def populate_table(self, cars):
         self.cars_data = cars  # Сохраняем данные, чтобы брать из них треки
@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f'Загружено машин: {len(cars)}')
         self.btn_refresh.setEnabled(True)
         self.is_running = False
-        self.timer.start(300000)  # Перезапускаем таймер на 5 минут
+        self.timer.stop()  # Перезапускаем таймер на 5 минут
 
     def filter_rows(self):
         query = self.search_input.text().strip().casefold()
