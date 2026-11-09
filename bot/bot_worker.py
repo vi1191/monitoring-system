@@ -5,6 +5,7 @@ import json
 import os
 import math
 import requests
+import concurrent.futures
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -88,7 +89,7 @@ class BotWorker(QThread):
             captured_missions = []
             captured_cars = []
 
-            def on_response(response):          # <-- 12 пробелов (3 уровня)
+            def on_response(response):
                 if "/services/mission?" in response.url and "is_archive=false" in response.url:
                     try:
                         result = response.json().get("result", {})
@@ -161,19 +162,13 @@ class BotWorker(QThread):
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(1000)
 
-                # Пагинация больше не нужна - данные уже в потоке
                 log("INFO", "Журнал: данные получены из потока (пагинация не требуется)")
 
                 # --- ПРЯМОЙ ЗАПРОС К API ДЛЯ ПОЛУЧЕНИЯ ВСЕХ МИССИЙ ---
-                # Берем токен из localStorage
                 raw_token = page.evaluate("() => localStorage.getItem('ets.mos.ru/-ets-session')")
                 token = raw_token.strip('"').replace('\\"', '').strip('"') if raw_token else None
                 
                 if token:
-                    import json
-                    
-                    # Формируем фильтр по дате (как на сайте)
-                    from datetime import datetime, timedelta
                     target_dt = datetime.strptime(self.target_date, "%Y-%m-%d")
                     yesterday = (target_dt - timedelta(days=1)).strftime("%Y-%m-%d")
                     
@@ -200,15 +195,11 @@ class BotWorker(QThread):
                             log("WARN", "API вернул пустой список миссий")
                     else:
                         log("WARN", f"API вернул статус {res.status}")
-                # ---------------------------------------------------
 
                 # --- ФИЛЬТРАЦИЯ МИССИЙ ПО ДАТЕ И СТАТУСУ ---
-                from datetime import datetime
-
                 unique_missions = {str(m.get("id")): m for m in captured_missions}
                 all_missions = list(unique_missions.values())
 
-                # Начало и конец выбранного дня
                 target_day_start = datetime.strptime(self.target_date, "%Y-%m-%d")
                 target_day_end = target_day_start.replace(hour=23, minute=59, second=59)
 
@@ -218,21 +209,17 @@ class BotWorker(QThread):
                     if m.get("is_archive"):
                         continue
                     
-                    # 2. Берем только те, что "Выполняется"
-                    #if m.get("status") != "in_progress":
-                        continue
-                    
-                    # 3. Проверяем, что период миссии пересекается с выбранной датой
+                    # 2. Проверяем, что период миссии пересекается с выбранной датой
                     try:
-                        date_start = datetime.fromisoformat(m.get("date_start", "").replace("Z", "+00:00")).replace(tzinfo=None)
-                        date_end = datetime.fromisoformat(m.get("date_end", "").replace("Z", "+00:00")).replace(tzinfo=None)
+                        d_start = datetime.fromisoformat(m.get("date_start", "").replace("Z", "+00:00")).replace(tzinfo=None)
+                        d_end = datetime.fromisoformat(m.get("date_end", "").replace("Z", "+00:00")).replace(tzinfo=None)
                     except (ValueError, TypeError):
                         continue
                     
-                    if not (date_start <= target_day_end and date_end >= target_day_start):
+                    if not (d_start <= target_day_end and d_end >= target_day_start):
                         continue
                     
-                    # 4. Проверяем, что путевой лист активен (если поле есть)
+                    # 3. Проверяем, что путевой лист активен (если поле есть)
                     if m.get("waybill_status") and m.get("waybill_status") not in ("active", "closed"):
                         continue
                     
@@ -240,10 +227,9 @@ class BotWorker(QThread):
 
                 target_missions.sort(key=lambda m: str(m.get("id", "")), reverse=True)
 
-                # --- ЛОГ ДЛЯ ПРОВЕРКИ ---
                 log("INFO", f"Миссий всего: {len(all_missions)}")
                 log("INFO", f"Миссий активных на {self.target_date}: {len(target_missions)}")
-                # -------------------------
+
                 car_map = {}
                 for row in captured_cars:
                     gov = str(row.get("gov_number", "")).strip()
@@ -294,8 +280,6 @@ class BotWorker(QThread):
                 tracks_ok = 0
                 tracks_err = 0
                 if target_cars:
-                    raw_token = page.evaluate("() => localStorage.getItem('ets.mos.ru/-ets-session')")
-                    token = raw_token.strip('"').replace('\\"', '').strip('"') if raw_token else None
                     if not token:
                         self.error.emit("Токен не найден.")
                     else:
@@ -311,12 +295,17 @@ class BotWorker(QThread):
                         total_reqs = len(requests_js)
                         self.status_msg.emit(f"Треки: 0/{total_reqs}")
 
-                        import concurrent.futures
+                        # --- ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ТРЕКОВ ---
+                        batch_size = 10  # Сколько запросов отправлять одновременно
 
-                        def fetch_track(req):
+                        def fetch_one(req):
                             try:
-                                res = page.request.get(req["url"], headers={"Authorization": f"Token {token}"})
-                                if res.status == 200:
+                                res = requests.get(
+                                    req["url"],
+                                    headers={"Authorization": f"Token {token}"},
+                                    timeout=60
+                                )
+                                if res.status_code == 200:
                                     json_data = res.json()
                                     return {
                                         "car_id": req["car_id"],
@@ -325,80 +314,44 @@ class BotWorker(QThread):
                                         "sensors_raw": json_data.get("cars_sensors"),
                                         "ets_fuel_start": json_data.get("sensor_start_value"),
                                         "ets_fuel_finish": json_data.get("sensor_finish_value"),
-                                        "ets_fuel_refill": json_data.get("sensor_refill")
+                                        "ets_fuel_refill": json_data.get("sensor_refill"),
+                                        "raw_json": json_data
                                     }
                                 else:
-                                    return {"car_id": req["car_id"], "status": res.status, "track": [], "sensors_raw": None}
+                                    return {"car_id": req["car_id"], "status": res.status_code, "track": [], "sensors_raw": None}
                             except Exception as e:
                                 log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
                                 return {"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None}
 
-                # --- ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ТРЕКОВ ---
-                import concurrent.futures
-
-                tracks_ok = 0
-                tracks_err = 0
-                batch_size = 10  # Сколько запросов отправлять одновременно
-
-                def fetch_one(req):
-                    try:
-                        res = requests.get(
-                            req["url"],
-                            headers={"Authorization": f"Token {token}"},
-                            timeout=60
-                        )
-                        if res.status_code == 200:
-                            json_data = res.json()
-                            return {
-                                "car_id": req["car_id"],
-                                "status": 200,
-                                "track": json_data.get("track", []),
-                                "sensors_raw": json_data.get("cars_sensors"),
-                                "ets_fuel_start": json_data.get("sensor_start_value"),
-                                "ets_fuel_finish": json_data.get("sensor_finish_value"),
-                                "ets_fuel_refill": json_data.get("sensor_refill"),
-                                "raw_json": json_data
-                            }
-                        else:
-                            return {"car_id": req["car_id"], "status": res.status_code, "track": [], "sensors_raw": None}
-                    except Exception as e:
-                        log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
-                        return {"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None}
-
-                # Запускаем запросы батчами по 10 штук (параллельно внутри батча)
-                for i in range(0, total_reqs, batch_size):
-                    batch = requests_js[i:i + batch_size]
-                    
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
-                        futures = {executor.submit(fetch_one, req): req for req in batch}
-                        
-                        for future in concurrent.futures.as_completed(futures):
-                            res = future.result()
-                            cid = res["car_id"]
+                        # Запускаем запросы батчами по 10 штук (параллельно внутри батча)
+                        for i in range(0, total_reqs, batch_size):
+                            batch = requests_js[i:i + batch_size]
                             
-                            for car in target_cars:
-                                if car["car_id"] == cid:
-                                    if res["status"] == 200:
-                                        car["track_points"] = len(res["track"])
-                                        car["_track_raw"] = res["track"]
-                                        car["_sensors_raw"] = res.get("sensors_raw")
-                                        car["_ets_fuel_start"] = res.get("ets_fuel_start")
-                                        car["_ets_fuel_finish"] = res.get("ets_fuel_finish")
-                                        car["_ets_fuel_refill"] = res.get("ets_fuel_refill")
-                                        car["_raw_json"] = res.get("raw_json")
-                                        tracks_ok += 1
-                                    else:
-                                        car["track_status"] = "Ошибка API"
-                                        car["track_detail"] = f"HTTP {res['status']}"
-                                        tracks_err += 1
-                                    break
-                    
-                    done = min(i + batch_size, total_reqs)
-                    self.status_msg.emit(f"Треки: {done}/{total_reqs}")
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as executor:
+                                futures = {executor.submit(fetch_one, req): req for req in batch}
+                                
+                                for future in concurrent.futures.as_completed(futures):
+                                    res = future.result()
+                                    cid = res["car_id"]
+                                    
+                                    for car in target_cars:
+                                        if car["car_id"] == cid:
+                                            if res["status"] == 200:
+                                                car["track_points"] = len(res["track"])
+                                                car["_track_raw"] = res["track"]
+                                                car["_sensors_raw"] = res.get("sensors_raw")
+                                                car["_raw_json"] = res.get("raw_json")
+                                                tracks_ok += 1
+                                            else:
+                                                car["track_status"] = "Ошибка API"
+                                                car["track_detail"] = f"HTTP {res['status']}"
+                                                tracks_err += 1
+                                            break
+                            
+                            done = min(i + batch_size, total_reqs)
+                            self.status_msg.emit(f"Треки: {done}/{total_reqs}")
 
                 stage("Треки")
-                # ----------------------------------
-
                 browser.close()
 
             for gps_code, info in stream.states.items():
@@ -446,21 +399,6 @@ class BotWorker(QThread):
                 car["valid_points"] = valid_pts
                 has_track = valid_pts >= 2
                 low_valid = total_pts > 0 and valid_pts / total_pts < 0.3
-
-                # ---------- ТОПЛИВО (ИЗ КОРНЯ ОТВЕТА ЕТС) ----------
-                f_start = car.get("_ets_fuel_start")
-                f_finish = car.get("_ets_fuel_finish")
-                f_refill = car.get("_ets_fuel_refill")
-
-                car["fuel_start"] = round(float(f_start), 1) if f_start is not None else "-"
-                car["fuel_fact"] = round(float(f_finish), 1) if f_finish is not None else "-"
-
-                if f_refill is not None and float(f_refill) > 0:
-                    car["fuel_refuel"] = f"+{round(float(f_refill), 1)}"
-                    car["fuel_refuel_detail"] = f"{round(float(f_refill), 1)} л (ЕТС)"
-                else:
-                    car["fuel_refuel"] = "-"
-                    car["fuel_refuel_detail"] = "-"
 
                 # ---------- ТЕЛЕПОРТЫ И ПРОБЕГ ----------
                 teleports = 0
@@ -542,7 +480,6 @@ class BotWorker(QThread):
                     problem = "Некорректный трек"
                     detail = f"валидных {valid_pts}/{total_pts} ({valid_pts/total_pts*100:.0f}%)"
                 elif not has_track:
-                    # Если трека нет, проверяем связь
                     if bnso_no_data or bnso_broken:
                         problem = "Машина не на связи"
                         detail = "нет трека, связи нет" if bnso_no_data else f"нет трека, связь {int(silent_min/60)} ч"
@@ -550,19 +487,15 @@ class BotWorker(QThread):
                         problem = "Некорректный трек"
                         detail = f"точек {valid_pts}/{total_pts}"
                 elif teleports >= 1 and not last_on_base:
-                    # Если трек есть, но есть телепорты, ставим сбой местоположения
                     problem = "Некорректное местоположение ТС"
                     parts = [f"телепортов {teleports}"]
                     if teleport_details: parts.append(f"({'; '.join(teleport_details)})")
                     if last_dist_km is not None: parts.append(f"последняя точка в {last_dist_km:.0f} км от базы")
                     detail = ", ".join(parts)
                 elif bnso_broken and valid_pts < 10:
-                    # БНСО ставим только если трек есть, но он совсем крошечный (машина просто пикнула и пропала)
                     problem = "Не работает БНСО"
                     detail = f"связь {int(silent_min/60)} ч, трек мал ({valid_pts} точек)"
                 else:
-                    # Если трек нормальный (много точек), но связь пропала, 
-                    # мы ставим Норма, но в деталях пишем, что связи нет
                     problem = "Норма"
                     detail = f"точек {valid_pts}/{total_pts}"
                     if bnso_broken or bnso_warn:
@@ -571,20 +504,7 @@ class BotWorker(QThread):
                     if last_on_base: detail += f", на базе ({last_dist_km:.1f} км)"
                     elif out_minutes > 0 and out_dist_km is not None: detail += f", на выезде {out_minutes} мин в {out_dist_km:.0f} км"
                     elif last_dist_km is not None: detail += f", последняя точка в {last_dist_km:.1f} км от базы"
-                                # ПРИНУДИТЕЛЬНОЕ ЗАПОЛНЕНИЕ ТОПЛИВА ИЗ КОРНЯ
-                f_start = car.get("_ets_fuel_start")
-                f_finish = car.get("_ets_fuel_finish")
-                f_refill = car.get("_ets_fuel_refill")
 
-                car["fuel_start"] = round(float(f_start), 1) if f_start is not None else "-"
-                car["fuel_fact"] = round(float(f_finish), 1) if f_finish is not None else "-"
-
-                if f_refill is not None and float(f_refill) > 0:
-                    car["fuel_refuel"] = f"+{round(float(f_refill), 1)}"
-                    car["fuel_refuel_detail"] = f"{round(float(f_refill), 1)} л (ЕТС)"
-                else:
-                    car["fuel_refuel"] = "-"
-                    car["fuel_refuel_detail"] = "-"
                 car["problem_type"] = problem
                 car["track_detail"] = detail
                 car["tech_to"] = "ОК"
@@ -593,17 +513,9 @@ class BotWorker(QThread):
 
             offline_cars.sort(key=lambda x: (x["problem_type"] == "Норма", x["gov_number"]))
 
-            t_total = time.time() - t_start
-            t_analyze = time.time() - t_analysis
-
-            log("INFO", f"Анализ: готово за {t_analyze:.1f} сек")
-            log("INFO", "===== ИТОГИ =====")
-            log("INFO", f"Машин в работе:      {len(target_cars)}")
-            log("INFO", f"Треков получено:     {tracks_ok} / {len(target_cars)} ({tracks_err} ошибок)")
-            log("INFO", f"Время сбора:         {t_total:.1f} сек")
-            log("INFO", "==================")
-
- # --- ФИНАЛЬНЫЙ ПАРСИНГ ТОПЛИВА ИЗ JSON ---
+            # ============================================================
+            # ФИНАЛЬНЫЙ ПАРСИНГ ТОПЛИВА (ТОЛЬКО ЗДЕСЬ, ЧТОБЫ НЕ ДУБЛИРОВАТЬ)
+            # ============================================================
             for car in offline_cars:
                 raw = car.get("_raw_json")
                 if raw:
@@ -626,16 +538,15 @@ class BotWorker(QThread):
                     car["fuel_refuel"] = "-"
                     car["fuel_refuel_detail"] = "-"
 
-                # 2. Записываем в таблицу
-                car["fuel_start"] = round(float(f_start), 1) if f_start is not None else "-"
-                car["fuel_fact"] = round(float(f_finish), 1) if f_finish is not None else "-"
+            t_total = time.time() - t_start
+            t_analyze = time.time() - t_analysis
 
-                if f_refill is not None and float(f_refill) > 0:
-                    car["fuel_refuel"] = f"+{round(float(f_refill), 1)}"
-                    car["fuel_refuel_detail"] = f"{round(float(f_refill), 1)} л (ЕТС)"
-                else:
-                    car["fuel_refuel"] = "-"
-                    car["fuel_refuel_detail"] = "-"
+            log("INFO", f"Анализ: готово за {t_analyze:.1f} сек")
+            log("INFO", "===== ИТОГИ =====")
+            log("INFO", f"Машин в работе:      {len(target_cars)}")
+            log("INFO", f"Треков получено:     {tracks_ok} / {len(target_cars)} ({tracks_err} ошибок)")
+            log("INFO", f"Время сбора:         {t_total:.1f} сек")
+            log("INFO", "==================")
 
             self.finished.emit(offline_cars)
 

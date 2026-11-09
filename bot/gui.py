@@ -5,6 +5,7 @@ import time
 import http.server
 import socketserver
 import threading
+from functools import partial
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from datetime import datetime
@@ -34,9 +35,8 @@ except ImportError:
     def save_estp_employee(e): pass
 
 
-# START:SETTINGS
 class LocalServerThread(threading.Thread):
-    def __init__(self, directory="../map", port=8000):
+    def __init__(self, directory="../map_clean", port=8000):
         super().__init__()
         self.daemon = True
         self.directory = directory
@@ -44,22 +44,19 @@ class LocalServerThread(threading.Thread):
         self.server = None
 
     def run(self):
-        original_dir = os.getcwd()
         try:
-            if os.path.exists(self.directory):
-                os.chdir(self.directory)
-            handler = http.server.SimpleHTTPRequestHandler
+            handler = partial(http.server.SimpleHTTPRequestHandler, directory=self.directory)
             self.server = socketserver.TCPServer(("", self.port), handler)
             self.server.serve_forever()
         except Exception as e:
             print(f"Ошибка сервера карты: {e}")
-        finally:
-            os.chdir(original_dir)
 
     def stop(self):
         if self.server:
             self.server.shutdown()
             self.server.server_close()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -100,7 +97,6 @@ class SettingsDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        # ---------- ЕТС ----------
         ets_section = QLabel("ЕТС")
         ets_section.setObjectName("section")
         layout.addWidget(ets_section)
@@ -111,7 +107,6 @@ class SettingsDialog(QDialog):
 
         self.login_input = QLineEdit()
         self.login_input.setPlaceholderText("Введите логин ЕТС")
-
         self.pass_input = QLineEdit()
         self.pass_input.setPlaceholderText("Введите пароль ЕТС")
         self.pass_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -132,7 +127,6 @@ class SettingsDialog(QDialog):
         form_ets.addRow("Пароль:", pass_row)
         layout.addLayout(form_ets)
 
-        # ---------- ЕСТП ----------
         estp_section = QLabel("ЕСТП")
         estp_section.setObjectName("section")
         layout.addWidget(estp_section)
@@ -143,7 +137,6 @@ class SettingsDialog(QDialog):
 
         self.estp_login_input = QLineEdit()
         self.estp_login_input.setPlaceholderText("Введите логин ЕСТП")
-
         self.estp_pass_input = QLineEdit()
         self.estp_pass_input.setPlaceholderText("Введите пароль ЕСТП")
         self.estp_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -164,7 +157,6 @@ class SettingsDialog(QDialog):
         form_estp.addRow("Пароль:", estp_pass_row)
         layout.addLayout(form_estp)
 
-        # ---------- Заполнение текущими значениями ----------
         curr_login, curr_pass = load_credentials()
         self.login_input.setText(curr_login)
         self.pass_input.setText(curr_pass)
@@ -173,7 +165,6 @@ class SettingsDialog(QDialog):
         self.estp_login_input.setText(curr_estp_login)
         self.estp_pass_input.setText(curr_estp_pass)
 
-        # ---------- Кнопки ----------
         btn_box = QHBoxLayout()
         btn_box.addStretch(1)
         btn_save = QPushButton("Сохранить")
@@ -199,7 +190,6 @@ class SettingsDialog(QDialog):
         self.btn_toggle_estp_pass.setText("🙈" if shown else "👁")
 
     def save(self):
-# END:SETTINGS
         l = self.login_input.text().strip()
         p = self.pass_input.text()
         if not l or not p:
@@ -216,16 +206,6 @@ class SettingsDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить данные: {e}")
 
-class MultiHeaderTableWidget(QTableWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.verticalHeader().setVisible(False)
-        self.horizontalHeader().setFixedHeight(50)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.columnCount() == 0:
-            return
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -237,7 +217,6 @@ class MainWindow(QMainWindow):
             QTableWidget::item { padding-left: 9px; padding-right: 7px; }
             QTableWidget::item:selected { color: #17212b; background-color: #a8d4f2; }
             
-            /* Стандартный вид ВСЕХ заголовков */
             QHeaderView::section { 
                 background-color: #e8edf3; 
                 padding: 8px;
@@ -245,7 +224,6 @@ class MainWindow(QMainWindow):
                 font-weight: bold; 
             }
             
-            /* Особый цвет для заголовков колонок топлива (5, 6, 7) */
             QHeaderView::section:nth-child(5), 
             QHeaderView::section:nth-child(6), 
             QHeaderView::section:nth-child(7) {
@@ -276,17 +254,9 @@ class MainWindow(QMainWindow):
         self.btn_settings.setFixedHeight(40)
         self.btn_settings.clicked.connect(self.open_settings)
 
-                # --- ТАЙМЕР АВТООБНОВЛЕНИЯ ---
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.auto_update)
-        self.timer.start(300000)  # 300000 мс = 5 минут
-
-        # --- НОВАЯ КНОПКА ---
-        self.btn_estp = QPushButton('Сформировать заявки в ЕСТП')
-        self.btn_estp.setFixedHeight(40)
-        self.btn_estp.clicked.connect(self.start_estp_tickets)
-        self.btn_estp.setStyleSheet('background-color: #d9eed9; border: 1px solid #a8d4a8;')
-        # --------------------
+        self.timer.start(300000)
 
         self.lbl_status = QLabel('Готов к работе')
         self.lbl_status.setStyleSheet('font-weight: bold;')
@@ -297,7 +267,6 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.lbl_status, 1)
         main_layout.addLayout(top_layout)
 
-        # ---------- Выбор даты проверки ----------
         date_layout = QHBoxLayout()
         date_layout.setSpacing(8)
         lbl_date = QLabel('Дата проверки:')
@@ -324,32 +293,23 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(search_layout)
 
         self.table = QTableWidget()
-        # 1. Устанавливаем колонки
         headers = [
             '✓', 'Номер ТС', 'Марка', 'Задание', 'Вып.\n%', 
             'Топливо\nвыезд', 'Топливо\nзаправка', 'Топливо\nфакт', 
             'Пробег,\nкм', 'Связь /\nтрек', 'Детали'
         ]
         self.table.setColumnCount(len(headers))
-        
-        # --- ВОЗВРАЩАЕМ СТАНДАРТНУЮ ШАПКУ ---
         self.table.setHorizontalHeaderLabels(headers)
         
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
         header.setMinimumSectionSize(40)
-        header.setFixedHeight(50) # Задаем высоту шапки, чтобы влезли две строки
+        header.setFixedHeight(50)
         
-        # --- ШИРИНА КОЛОНОК ---
         widths = (30, 100, 140, 100, 45, 80, 100, 90, 80, 180, 250)
         for col, width in enumerate(widths):
             self.table.setColumnWidth(col, width)
-
-        # ВАЖНО: Поскольку у нас две строки заголовков, нужно добавить подзаголовки для топлива.
-        # В QTableWidget это делается через кастомный делегат, но проще всего 
-        # добавить их как обычные QLabel поверх, либо использовать трюк с первой строкой данных.
-        # Но мы пойдем самым надежным путем: настроим текст в заголовках через QTableWidgetItem.
             
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(40)
@@ -361,16 +321,15 @@ class MainWindow(QMainWindow):
         
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-        self.table.installEventFilter(self)
+        
+        # Одинарный клик - рисуем
         self.table.itemSelectionChanged.connect(self.on_row_selected)
+        # Двойной клик - стираем (надежный способ)
+        self.table.itemDoubleClicked.connect(self.on_row_double_clicked)
         
-        # ---------- СПЛИТТЕР (Таблица слева, Карта справа) ----------
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        # ЛЕВАЯ ЧАСТЬ: Таблица
         self.splitter.addWidget(self.table)
         
-        # ПРАВАЯ ЧАСТЬ: Контейнер для карты
         self.map_container = QWidget()
         map_layout = QVBoxLayout(self.map_container)
         map_layout.setContentsMargins(0, 0, 0, 0)
@@ -378,50 +337,21 @@ class MainWindow(QMainWindow):
         self.web_view = QWebEngineView()
         map_layout.addWidget(self.web_view)
         self.splitter.addWidget(self.map_container)
-        
-        # Пропорции: 650px на таблицу, 1000px на карту (можете менять)
         self.splitter.setSizes([650, 1000])
-        
-        # Добавляем сплиттер вместо таблицы
         main_layout.addWidget(self.splitter, 1)
         
-        # Запуск сервера
-                # Вычисляем абсолютный путь к папке map_clean относительно текущего файла gui.py
         current_dir = os.path.dirname(os.path.abspath(__file__))
         map_path = os.path.join(current_dir, "..", "map_clean")
         
         self.server_thread = LocalServerThread(directory=map_path, port=8000)
         self.server_thread.start()
         time.sleep(0.5)
-        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html"))
-
-        # ---------- Кнопка "Просмотр заявок" справа, зелёная ----------
-        ticket_btn_layout = QHBoxLayout()
-        ticket_btn_layout.addStretch(1)  # прижимаем кнопку вправо
-        self.btn_create_ticket = QPushButton('Просмотр заявок для выбранных машин')
-        self.btn_create_ticket.setFixedHeight(45)
-        self.btn_create_ticket.setMinimumWidth(320)
-        self.btn_create_ticket.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_create_ticket.setStyleSheet('''
-            QPushButton {
-                background-color: #2e9e5b;
-                color: white;
-                border: 1px solid #248048;
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 10px 20px;
-            }
-            QPushButton:hover { background-color: #248048; }
-            QPushButton:pressed { background-color: #1d6b3b; }
-        ''')
-        self.btn_create_ticket.clicked.connect(self.create_tickets)
-        ticket_btn_layout.addWidget(self.btn_create_ticket)
-        main_layout.addLayout(ticket_btn_layout)
+        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=6"))
 
         self.worker = None
         self.is_running = False
-        self.start_collection()  # Сразу начинаем сбор при запуске
+        self.last_selected_row = None
+        self.start_collection()
 
     def open_settings(self):
         dialog = SettingsDialog(self)
@@ -457,7 +387,6 @@ class MainWindow(QMainWindow):
         self.is_running = True
         self.btn_refresh.setEnabled(False)
 
-        # Берём дату из QDateEdit и передаём в BotWorker
         target_date = self.date_edit.date().toString("yyyy-MM-dd")
         self.lbl_status.setText(f'Сбор данных за {self.date_edit.date().toString("dd.MM.yyyy")}...')
 
@@ -472,55 +401,36 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, 'Ошибка', message)
         self.btn_refresh.setEnabled(True)
         self.is_running = False
-        self.timer.start(120000)  # Перезапускаем таймер даже при ошибке
+        self.timer.start(120000)
 
     def populate_table(self, cars):
-        self.cars_data = cars  # Сохраняем данные, чтобы брать из них треки
-        
-        # --- ОТЛАДКА: Ищем машину с треком ---
-        if cars:
-            for i, c in enumerate(cars):
-                track = c.get('_track_raw')
-                if track:
-                    print(f"МАШИНА {i} ({c.get('gov_number')}) ИМЕЕТ ТРЕК. Длина: {len(track)}")
-                    print(f"ПЕРВЫЕ 3 ТОЧКИ: {track[:3]}")
-                    break
-            else:
-                print("НИ У ОДНОЙ МАШИНЫ НЕТ ТРЕКА")
-        # ---------------------------------------
-        
+        self.cars_data = cars
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(cars))
         bold = QFont(self.table.font())
         bold.setBold(True)
+        
         for row, car in enumerate(cars):
             status = self.display_value(car.get('problem_type', 'Нет данных'))
             vals = (
-                '', 
-                car.get('gov_number'), 
-                car.get('model_name'),
-                car.get('mission_status'), 
-                car.get('percent'), 
-                car.get('fuel_start'), 
-                car.get('fuel_refuel'),        # «Заправка (ЕТС)» с деталями
-                car.get('fuel_fact'), 
-                car.get('distance', 0),
-                status, 
-                car.get('track_detail')
+                '', car.get('gov_number'), car.get('model_name'),
+                car.get('mission_status'), car.get('percent'), 
+                car.get('fuel_start'), car.get('fuel_refuel'),
+                car.get('fuel_fact'), car.get('distance', 0),
+                status, car.get('track_detail')
             )
             color = self.row_color(status)
+            
             for col, value in enumerate(vals):
                 text = self.display_value(value) if col != 0 else ''
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
-                
-                # 1. Сначала ставим стандартный цвет (зеленый/красный)
                 item.setBackground(color)
 
                 if col == 1:
                     item.setFont(bold)
+                    item.setData(Qt.ItemDataRole.UserRole, car.get('car_id'))
                     
-                # Выравнивание для числовых колонок (включая топливо)
                 if col in (4, 5, 6, 7, 8):   
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                     
@@ -528,7 +438,6 @@ class MainWindow(QMainWindow):
                     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
                     item.setCheckState(Qt.CheckState.Unchecked)
                     
-                self.table.setRowCount(len(cars)) # (или self.table.setItem(row, col, item))
                 self.table.setItem(row, col, item)
 
         self.table.setSortingEnabled(True)
@@ -536,7 +445,6 @@ class MainWindow(QMainWindow):
         self.lbl_status.setText(f'Загружено машин: {len(cars)}')
         self.btn_refresh.setEnabled(True)
         self.is_running = False
-        self.timer.stop()  # Перезапускаем таймер на 5 минут
 
     def filter_rows(self):
         query = self.search_input.text().strip().casefold()
@@ -550,34 +458,6 @@ class MainWindow(QMainWindow):
             self.table.setRowHidden(row, not matches)
             visible += matches
         self.lbl_count.setText(f'Машин: {visible} из {self.table.rowCount()}')
-
-    def create_tickets(self):
-        selected = []
-        for row in range(self.table.rowCount()):
-            chk = self.table.item(row, 0)
-            if chk and chk.checkState() == Qt.CheckState.Checked:
-                gov = self.table.item(row, 1).text()
-                status = self.table.item(row, 9).text()  # «Связь / трек» теперь индекс 9
-                selected.append((gov, status))
-
-        if not selected:
-            QMessageBox.warning(self, 'Внимание', 'Выберите хотя бы одну машину галочкой.')
-            return
-
-        ticket_type = 'Не работает БНСО (нет связи)' if self.radio_bnso.isChecked() else 'Некорректный трек (сбой местоположения)'
-        msg = f'Выбрано машин: {len(selected)}.\nТип заявки: {ticket_type}\n\nСписок:\n'
-        for g, s in selected:
-            msg += f'- {g} ({s})\n'
-        msg += '\nЭто только предпросмотр: заявки не отправлены.'
-        QMessageBox.information(self, 'Предпросмотр заявок', msg)
-
-    def show_context_menu(self, pos):
-        from PyQt6.QtWidgets import QMenu
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать выделенные строки")
-        action = menu.exec(self.table.viewport().mapToGlobal(pos))
-        if action == copy_action:
-            self.copy_selected_rows()
 
     def copy_selected_rows(self):
         from PyQt6.QtWidgets import QApplication
@@ -597,13 +477,13 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         self.lbl_status.setText("Скопировано в буфер обмена!")
 
-    def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
-        if obj == self.table and event.type() == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_C and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-                self.copy_selected_rows()
-                return True
-        return super().eventFilter(obj, event)
+    def show_context_menu(self, pos):
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu()
+        copy_action = menu.addAction("Копировать выделенные строки")
+        action = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if action == copy_action:
+            self.copy_selected_rows()
 
     def export_to_csv(self):
         path, _ = QFileDialog.getSaveFileName(self, "Сохранить как CSV", "report.csv", "CSV files (*.csv)")
@@ -620,6 +500,39 @@ class MainWindow(QMainWindow):
                     row_data.append(item.text() if item else "")
                 writer.writerow(row_data)
         self.lbl_status.setText(f"Сохранено в {path}")
+
+    def on_row_selected(self):
+        selected_rows = self.table.selectedItems()
+        if not selected_rows:
+            return
+        
+        row = selected_rows[0].row()
+        car_number = self.table.item(row, 1).text()
+        car_id = self.table.item(row, 1).data(Qt.ItemDataRole.UserRole)
+        
+        car_track = []
+        if hasattr(self, 'cars_data') and car_id:
+            car_data = next((c for c in self.cars_data if str(c.get('car_id')) == str(car_id)), None)
+            if car_data:
+                car_track = car_data.get('_track_raw', [])
+                if car_track:
+                    car_track = [point['coords'] for point in car_track if 'coords' in point]
+        
+        if not car_track:
+            self.lbl_status.setText(f"Машина {car_number}: нет данных о треке")
+            return
+            
+        self.lbl_status.setText(f"Машина {car_number}: отрисовка трека...")
+        
+        import json
+        coords_json = json.dumps(car_track)
+        js_code = f"window.drawTrack({coords_json}, '{car_number}');"
+        self.web_view.page().runJavaScript(js_code)
+
+    def on_row_double_clicked(self):
+        # При двойном клике стираем трек
+        self.web_view.page().runJavaScript("window.clearTrack();")
+        self.lbl_status.setText("Трек скрыт")
 
     def start_estp_tickets(self):
         if self.table.rowCount() == 0:
@@ -663,41 +576,9 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=run_bot, daemon=True).start()
 
-    def on_row_selected(self):
-        selected_rows = self.table.selectedItems()
-        if not selected_rows:
-            return
-        row = selected_rows[0].row()
-        
-        # Берем номер машины из таблицы (для отображения)
-        car_number = self.table.item(row, 1).text()
-        
-        # Ищем эту машину в сохраненных данных, чтобы достать трек
-        car_track = []
-        if hasattr(self, 'cars_data') and row < len(self.cars_data):
-            car_data = self.cars_data[row]
-            car_track = car_data.get('_track_raw', [])
-                        # Превращаем список словарей в простой список координат
-            if car_track:
-                car_track = [point['coords'] for point in car_track if 'coords' in point]
-        
-        if not car_track:
-            self.lbl_status.setText(f"Машина {car_number}: нет данных о треке")
-            return
-            
-        self.lbl_status.setText(f"Машина {car_number}: отрисовка трека...")
-        
-        # Передаем реальные координаты в JavaScript
-        import json
-        coords_json = json.dumps(car_track)
-        js_code = f"window.drawTrack({coords_json}, '{car_number}');"
-        self.web_view.page().runJavaScript(js_code)
-
     def auto_update(self):
-        # Если сбор уже идет, пропускаем этот тик
         if self.is_running:
             return
-        # Если не идет, запускаем сбор
         self.start_collection()
 
     def closeEvent(self, event):
