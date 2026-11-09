@@ -1,21 +1,25 @@
 ﻿# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+.venv/
 venv/
-bot/last_seen_cache.json
-last_seen_cache.json
+env/
 
-# Секреты
-credentials.json
+# Локальные данные и креды
+bot/credentials.json
+bot/cache.json
+map_clean/last_seen_cache.json
 
-# громные выгрузки OSM
-map_clean/streets_osm.json
-map_clean/yards_osm.json
+# Node (legacy)
+legacy/map/node_modules/
+legacy/map/package-lock.json
+legacy/map/dist/
+legacy/map/.vite/
 
-# Node.js
-map/node_modules/
-map/.git
-
-# System
+# IDE / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+*.log

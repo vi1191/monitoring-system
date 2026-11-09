@@ -3,7 +3,7 @@ import math
 import os
 
 # Пути к файлам
-INPUT_FILE = "bot/ets_geozones.json"
+INPUT_FILE = "legacy/bot/ets_geozones.json"
 OUTPUT_FILE = "map_clean/streets_fixed.json"
 
 def convert_coords(ring):
