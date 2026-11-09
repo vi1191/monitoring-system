@@ -173,7 +173,14 @@ class BotWorker(QThread):
                     import json
                     
                     # Формируем фильтр по дате (как на сайте)
-                    filters_json = json.dumps({"date_start_eq": self.target_date})
+                    from datetime import datetime, timedelta
+                    target_dt = datetime.strptime(self.target_date, "%Y-%m-%d")
+                    yesterday = (target_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+                    
+                    filters_json = json.dumps({
+                        "date_start_gte": yesterday,
+                        "date_start_lte": self.target_date
+                    })
                     
                     # Один запрос БЕЗ limit и БЕЗ offset — сервер сам отдаст все миссии
                     api_url = f"https://ets.mos.ru/services/mission?is_archive=false&filters={filters_json}"
@@ -212,7 +219,7 @@ class BotWorker(QThread):
                         continue
                     
                     # 2. Берем только те, что "Выполняется"
-                    if m.get("status") != "in_progress":
+                    #if m.get("status") != "in_progress":
                         continue
                     
                     # 3. Проверяем, что период миссии пересекается с выбранной датой
