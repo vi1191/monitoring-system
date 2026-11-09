@@ -87,7 +87,7 @@ class BotWorker(QThread):
             captured_missions = []
             captured_cars = []
 
-            def on_response(response):
+            def on_response(response):          # <-- 12 пробелов (3 уровня)
                 if "/services/mission?" in response.url and "is_archive=false" in response.url:
                     try:
                         result = response.json().get("result", {})
@@ -153,41 +153,89 @@ class BotWorker(QThread):
                 page.goto(journal_url)
                 page.wait_for_timeout(5000)
 
+                # Ждем, пока прогрузится уведомление (если есть)
                 try:
                     page.locator("#notifiaction_orders").wait_for(state="hidden", timeout=5000)
                 except Exception:
                     page.keyboard.press("Escape")
                     page.wait_for_timeout(1000)
 
-                log("INFO", "Журнал: переключаю на 100 строк...")
-                try:
-                    log("DEBUG", "1. Ищу селектор страниц...")
-                    pag_opt = page.locator(".ant-pagination-options .ant-select").first
-                    pag_opt.click()
-                    log("DEBUG", "2. Кликнул селектор, жду 1 сек...")
-                    page.wait_for_timeout(1000)
+                # Пагинация больше не нужна - данные уже в потоке
+                log("INFO", "Журнал: данные получены из потока (пагинация не требуется)")
+                
+                # --- ПРЯМОЙ ЗАПРОС К API ДЛЯ ПОЛУЧЕНИЯ ВСЕХ МИССИЙ ---
+                # Берем токен из localStorage
+                raw_token = page.evaluate("() => localStorage.getItem('ets.mos.ru/-ets-session')")
+                token = raw_token.strip('"').replace('\\"', '').strip('"') if raw_token else None
+                
+                if token:
+                    import json
+                    
+                    # Формируем фильтр по дате (как на сайте)
+                    filters_json = json.dumps({"date_start_eq": self.target_date})
+                    
+                    # Один запрос БЕЗ limit и БЕЗ offset — сервер сам отдаст все миссии
+                    api_url = f"https://ets.mos.ru/services/mission?is_archive=false&filters={filters_json}"
+                    
+                    log("INFO", f"Запрашиваю все миссии за {self.target_date} через API (без лимитов)...")
+                    
+                    res = page.request.get(api_url, headers={"Authorization": f"Token {token}"})
+                    
+                    if res.status == 200:
+                        json_data = res.json()
+                        rows = json_data.get("result", {}).get("rows", [])
+                        if rows:
+                            captured_missions.clear()
+                            captured_missions.extend(rows)
+                            log("INFO", f"API: получено {len(rows)} миссий за {self.target_date}")
+                        else:
+                            log("WARN", "API вернул пустой список миссий")
+                    else:
+                        log("WARN", f"API вернул статус {res.status}")
+                # ---------------------------------------------------
 
-                    log("DEBUG", "3. Ищу опцию 100...")
-                    option_100 = page.locator(".ant-select-item-option-content", has_text="100").first
-                    option_100.wait_for(state="visible", timeout=5000)
-                    log("DEBUG", "4. Опция видна, кликаю с ожиданием ответа...")
-
-                    with page.expect_response(
-                        lambda r: "/services/mission?" in r.url and "is_archive=false" in r.url,
-                        timeout=15000,
-                     ):
-                        option_100.click()
-                    log("DEBUG", "5. Ответ получен, жду 1 сек...")
-                    page.wait_for_timeout(1000)
-                except Exception as e:
-                    log("WARN", f"Ошибка пагинации: {e}")
-                    log("DEBUG", "Журнал: пагинация завершена, иду дальше")
+                # --- ФИЛЬТРАЦИЯ МИССИЙ ПО ДАТЕ И СТАТУСУ ---
+                from datetime import datetime
 
                 unique_missions = {str(m.get("id")): m for m in captured_missions}
                 all_missions = list(unique_missions.values())
-                target_missions = [m for m in all_missions if self.target_date in str(m.get("date_start") or "")]
+
+                # Начало и конец выбранного дня
+                target_day_start = datetime.strptime(self.target_date, "%Y-%m-%d")
+                target_day_end = target_day_start.replace(hour=23, minute=59, second=59)
+
+                target_missions = []
+                for m in all_missions:
+                    # 1. Пропускаем архив
+                    if m.get("is_archive"):
+                        continue
+                    
+                    # 2. Берем только те, что "Выполняется"
+                    if m.get("status") != "in_progress":
+                        continue
+                    
+                    # 3. Проверяем, что период миссии пересекается с выбранной датой
+                    try:
+                        date_start = datetime.fromisoformat(m.get("date_start", "").replace("Z", "+00:00")).replace(tzinfo=None)
+                        date_end = datetime.fromisoformat(m.get("date_end", "").replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (ValueError, TypeError):
+                        continue
+                    
+                    if not (date_start <= target_day_end and date_end >= target_day_start):
+                        continue
+                    
+                    # 4. Проверяем, что путевой лист активен (если поле есть)
+                    if m.get("waybill_status") and m.get("waybill_status") not in ("active", "closed"):
+                        continue
+                    
+                    target_missions.append(m)
+
                 target_missions.sort(key=lambda m: str(m.get("id", "")), reverse=True)
 
+                # --- ЛОГ ДЛЯ ПРОВЕРКИ ---
+                log("INFO", f"Миссий всего: {len(all_missions)}")
+                log("INFO", f"Миссий активных на {self.target_date}: {len(target_missions)}")
+                # -------------------------
                 car_map = {}
                 for row in captured_cars:
                     gov = str(row.get("gov_number", "")).strip()
