@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, 
     QHBoxLayout, QWidget, QPushButton, QLabel, QMessageBox, QGroupBox, 
     QRadioButton, QHeaderView, QLineEdit, QFileDialog, QDialog, QFormLayout,
-    QDateEdit, QSplitter
+    QDateEdit, QSplitter, QComboBox, QCompleter
 )
 from PyQt6.QtCore import Qt, QDate, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter
@@ -155,6 +155,12 @@ class SettingsDialog(QDialog):
 
         form_estp.addRow("Логин:", self.estp_login_input)
         form_estp.addRow("Пароль:", estp_pass_row)
+
+        # Поле для ФИО сотрудника
+        self.estp_employee_input = QLineEdit()
+        self.estp_employee_input.setPlaceholderText("Иванов И.И.")
+        form_estp.addRow("ФИО сотрудника:", self.estp_employee_input)
+        
         layout.addLayout(form_estp)
 
         curr_login, curr_pass = load_credentials()
@@ -164,6 +170,9 @@ class SettingsDialog(QDialog):
         curr_estp_login, curr_estp_pass = load_estp_credentials()
         self.estp_login_input.setText(curr_estp_login)
         self.estp_pass_input.setText(curr_estp_pass)
+
+        curr_employee = load_estp_employee()
+        self.estp_employee_input.setText(curr_employee)
 
         btn_box = QHBoxLayout()
         btn_box.addStretch(1)
@@ -198,13 +207,151 @@ class SettingsDialog(QDialog):
 
         estp_l = self.estp_login_input.text().strip()
         estp_p = self.estp_pass_input.text()
+        emp = self.estp_employee_input.text().strip()
 
         try:
             save_credentials(l, p)
             save_estp_credentials(estp_l, estp_p)
+            save_estp_employee(emp)
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить данные: {e}")
+
+
+class ConfirmTicketsDialog(QDialog):
+    def __init__(self, selected_cars, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Подтверждение заявок в ЕСТП")
+        self.resize(1000, 500)
+        self.selected_cars = selected_cars
+        
+        layout = QVBoxLayout(self)
+        
+        lbl = QLabel("Выберите классификацию из списка ЕСТП, шаблон и добавьте свой комментарий.")
+        lbl.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(lbl)
+        
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Номер ТС", "Проблема (из ЕТС)", "Классификация и Комментарий"])
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(0, 120)
+        self.table.setColumnWidth(1, 200)
+        self.table.setRowCount(len(selected_cars))
+        
+        self.sla_options = [
+            "Удаленное изменение настроек БНСО",
+            "Проведение работ по восстановлению неработающего БНСО",
+            "Проведение замены/ремонта датчиков учета топлива",
+            "Внесение изменений в информацию по ТС в АСУ ОДС ДЖКХиБ",
+            "Дистанционная поддержка",
+            "Нет данных по ТС в системе предприятия",
+            "Нет данных по ТС в АСУ ОДС",
+            "Некорректный трек ТС",
+            "Другое",
+            "Ввод в эксплуатацию",
+            "Претензия"
+        ]
+        
+        self.comment_options = [
+            "Некорректное местоположение ТС",
+            "машина не выходит на связь",
+            "не отображается трек"
+        ]
+        
+        for row, car in enumerate(selected_cars):
+            item_gov = QTableWidgetItem(car['gov_number'])
+            item_gov.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 0, item_gov)
+            
+            item_prob = QTableWidgetItem(car['problem_type'])
+            item_prob.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.table.setItem(row, 1, item_prob)
+            
+            container = QWidget()
+            c_layout = QVBoxLayout(container)
+            c_layout.setContentsMargins(2, 2, 2, 2)
+            c_layout.setSpacing(2)
+            
+            # Классификация
+            combo = QComboBox()
+            combo.addItems(self.sla_options)
+            
+            prob_text = car['problem_type']
+            if 'Некорректное местоположение' in prob_text or 'Некорректный трек' in prob_text:
+                combo.setCurrentText("Некорректный трек ТС")
+                default_comment = "Некорректное местоположение ТС"
+            elif 'БНСО' in prob_text or 'не на связи' in prob_text:
+                combo.setCurrentText("Проведение работ по восстановлению неработающего БНСО")
+                default_comment = "машина не выходит на связь"
+            else:
+                combo.setCurrentText("Другое")
+                default_comment = ""  # Оставляем пустым для "Норма"
+                
+            # --- НОВЫЙ КОД: Поле с автодополнением ---
+            line_comment = QLineEdit()
+            line_comment.setText(default_comment)
+            
+            # Создаем подсказки для поля
+            completer = QCompleter(self.comment_options, self)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            line_comment.setCompleter(completer)
+
+                        # Показывать все подсказки при клике на пустое поле
+            def show_all_on_click(event, line=line_comment, comp=completer):
+                line.setCompleter(comp)
+                # Вызываем стандартный обработчик клика
+                QLineEdit.mousePressEvent(line, event)
+                # Если поле пустое, показываем полный список
+                if line.text() == "":
+                    comp.setCompletionPrefix("")
+                    comp.complete()
+
+            line_comment.mousePressEvent = show_all_on_click
+            
+            # Добавляем в контейнер
+            c_layout.addWidget(combo)         # Классификация
+            c_layout.addWidget(line_comment)  # Поле с комментарием
+            
+            self.table.setCellWidget(row, 2, container)
+            self.table.setRowHeight(row, 60)
+            
+        layout.addWidget(self.table)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch(1)
+        
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_send = QPushButton("ОТПРАВИТЬ В ЕСТП")
+        btn_send.setStyleSheet("background-color: #2e9e5b; color: white; font-weight: bold; padding: 10px; border-radius: 5px;")
+        btn_send.clicked.connect(self.accept)
+        
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_send)
+        layout.addLayout(btn_layout)
+
+    def get_final_data(self):
+        final_cars = []
+        for row in range(self.table.rowCount()):
+            gov = self.table.item(row, 0).text()
+            problem = self.table.item(row, 1).text()
+            
+            container = self.table.cellWidget(row, 2)
+            combo = container.findChild(QComboBox)
+            # Второй QComboBox — это шаблон, он нам не нужен для отправки
+            # Третий элемент — QLineEdit (итоговый текст)
+            line_comment = container.findChild(QLineEdit)
+            
+            final_cars.append({
+                "gov_number": gov,
+                "problem_type": problem,
+                "sla": combo.currentText(),
+                "comment": line_comment.text()
+            })
+        return final_cars
 
 
 class MainWindow(QMainWindow):
@@ -254,9 +401,10 @@ class MainWindow(QMainWindow):
         self.btn_settings.setFixedHeight(40)
         self.btn_settings.clicked.connect(self.open_settings)
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.auto_update)
-        self.timer.start(300000)
+        # Таймер отключен
+        # self.timer = QTimer(self)
+        # self.timer.timeout.connect(self.auto_update)
+        # self.timer.start(300000)
 
         self.lbl_status = QLabel('Готов к работе')
         self.lbl_status.setStyleSheet('font-weight: bold;')
@@ -307,7 +455,8 @@ class MainWindow(QMainWindow):
         header.setMinimumSectionSize(40)
         header.setFixedHeight(50)
         
-        widths = (30, 100, 140, 100, 45, 80, 100, 90, 80, 180, 250)
+        # Ширина "Задание" (индекс 3) увеличена до 220
+        widths = (30, 100, 160, 160, 45, 80, 100, 90, 80, 180, 250)
         for col, width in enumerate(widths):
             self.table.setColumnWidth(col, width)
             
@@ -322,9 +471,7 @@ class MainWindow(QMainWindow):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         
-        # Одинарный клик - рисуем
         self.table.itemSelectionChanged.connect(self.on_row_selected)
-        # Двойной клик - стираем (надежный способ)
         self.table.itemDoubleClicked.connect(self.on_row_double_clicked)
         
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -346,11 +493,33 @@ class MainWindow(QMainWindow):
         self.server_thread = LocalServerThread(directory=map_path, port=8000)
         self.server_thread.start()
         time.sleep(0.5)
-        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=6"))
+        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=8"))
+
+        ticket_btn_layout = QHBoxLayout()
+        ticket_btn_layout.addStretch(1)
+        self.btn_create_ticket = QPushButton('Создать заявки в ЕСТП')
+        self.btn_create_ticket.setFixedHeight(45)
+        self.btn_create_ticket.setMinimumWidth(320)
+        self.btn_create_ticket.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_create_ticket.setStyleSheet('''
+            QPushButton {
+                background-color: #2e9e5b;
+                color: white;
+                border: 1px solid #248048;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px 20px;
+            }
+            QPushButton:hover { background-color: #248048; }
+            QPushButton:pressed { background-color: #1d6b3b; }
+        ''')
+        self.btn_create_ticket.clicked.connect(self.create_tickets)
+        ticket_btn_layout.addWidget(self.btn_create_ticket)
+        main_layout.addLayout(ticket_btn_layout)
 
         self.worker = None
         self.is_running = False
-        self.last_selected_row = None
         self.start_collection()
 
     def open_settings(self):
@@ -401,7 +570,6 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, 'Ошибка', message)
         self.btn_refresh.setEnabled(True)
         self.is_running = False
-        self.timer.start(120000)
 
     def populate_table(self, cars):
         self.cars_data = cars
@@ -430,6 +598,14 @@ class MainWindow(QMainWindow):
                 if col == 1:
                     item.setFont(bold)
                     item.setData(Qt.ItemDataRole.UserRole, car.get('car_id'))
+                    
+                if col == 3: 
+                    order_num = car.get('order_number')
+                    status_text = str(car.get('mission_status', 'Выполняется'))
+                    if order_num and order_num != '-' and str(order_num).strip() != '':
+                        item.setText(f"{status_text} {order_num}")
+                    else:
+                        item.setText(status_text)
                     
                 if col in (4, 5, 6, 7, 8):   
                     item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -501,6 +677,46 @@ class MainWindow(QMainWindow):
                 writer.writerow(row_data)
         self.lbl_status.setText(f"Сохранено в {path}")
 
+    def create_tickets(self):
+        selected_cars = []
+        for row in range(self.table.rowCount()):
+            chk = self.table.item(row, 0)
+            if chk and chk.checkState() == Qt.CheckState.Checked:
+                gov = self.table.item(row, 1).text()
+                status = self.table.item(row, 9).text()
+                selected_cars.append({"gov_number": gov, "problem_type": status})
+
+        if not selected_cars:
+            QMessageBox.warning(self, 'Внимание', 'Выберите хотя бы одну машину галочкой.')
+            return
+
+        dialog = ConfirmTicketsDialog(selected_cars, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            final_cars = dialog.get_final_data()
+            
+            from auth import load_estp_credentials, load_estp_employee
+            estp_login, estp_pass = load_estp_credentials()
+            employee = load_estp_employee()
+
+            if not estp_login or not estp_pass or not employee:
+                QMessageBox.warning(self, "Ошибка", "Заполните доступы ЕСТП в меню 'Доступы'.")
+                return
+
+            self.lbl_status.setText(f"Отправка заявок в ЕСТП ({len(final_cars)} шт)...")
+            
+            import threading
+            from estp_worker import run_estp_dry_run
+            
+            def run_bot():
+                try:
+                    run_estp_dry_run(final_cars, estp_login, estp_pass, employee)
+                    self.lbl_status.setText("ЕСТП: Заявки успешно созданы.")
+                except Exception as e:
+                    self.lbl_status.setText("Ошибка ЕСТП.")
+                    print(f"Ошибка: {e}")
+
+            threading.Thread(target=run_bot, daemon=True).start()
+
     def on_row_selected(self):
         selected_rows = self.table.selectedItems()
         if not selected_rows:
@@ -530,51 +746,8 @@ class MainWindow(QMainWindow):
         self.web_view.page().runJavaScript(js_code)
 
     def on_row_double_clicked(self):
-        # При двойном клике стираем трек
         self.web_view.page().runJavaScript("window.clearTrack();")
         self.lbl_status.setText("Трек скрыт")
-
-    def start_estp_tickets(self):
-        if self.table.rowCount() == 0:
-            QMessageBox.warning(self, "Внимание", "Сначала обновите данные.")
-            return
-
-        target_car = None
-        for row in range(self.table.rowCount()):
-            status_item = self.table.item(row, 9)
-            if status_item and status_item.text() != "Норма":
-                target_car = {
-                    "gov_number": self.table.item(row, 1).text(),
-                    "problem_type": status_item.text()
-                }
-                break
-
-        if not target_car:
-            QMessageBox.information(self, "Информация", "Все машины в норме.")
-            return
-
-        from auth import load_estp_credentials, load_estp_employee
-        estp_login, estp_pass = load_estp_credentials()
-        employee = load_estp_employee()
-
-        if not estp_login or not estp_pass or not employee:
-            QMessageBox.warning(self, "Ошибка", "Заполните доступы в меню 'Доступы'.")
-            return
-
-        self.lbl_status.setText(f"Запуск ЕСТП для {target_car['gov_number']}...")
-        
-        import threading
-        from estp_worker import run_estp_dry_run
-        
-        def run_bot():
-            try:
-                run_estp_dry_run(target_car, estp_login, estp_pass, employee)
-                self.lbl_status.setText("ЕСТП: Окно закрыто.")
-            except Exception as e:
-                self.lbl_status.setText("Ошибка ЕСТП.")
-                print(f"Ошибка: {e}")
-
-        threading.Thread(target=run_bot, daemon=True).start()
 
     def auto_update(self):
         if self.is_running:

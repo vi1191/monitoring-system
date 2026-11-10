@@ -255,6 +255,7 @@ class BotWorker(QThread):
                     target_cars.append({
                         "car_id": car_id,
                         "mission_id": str(m.get("id", "")),
+                        "order_number": m.get("order_number", "-"),
                         "gps_code": gps,
                         "gov_number": gov,
                         "garage_number": (info["garage_number"] if info else m.get("car_garage_number", "?")),
