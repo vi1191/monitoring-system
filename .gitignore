@@ -24,3 +24,5 @@ legacy/map/.vite/
 .DS_Store
 Thumbs.db
 *.log
+# Скриншоты отладки
+*.png
