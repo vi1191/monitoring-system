@@ -25,18 +25,18 @@ SUBMIT_BTN  = "button[type='submit'], button:has-text('Войти'), button:has-
 
 # --- Параметры анализа ---
 BASE_LAT, BASE_LON = 55.667, 37.432
-BASE_RADIUS_KM = 5.0
+BASE_RADIUS_KM = 3.0
 BNSO_HOURS = 4
 BNSO_WARN_HOURS = 2
-MAX_REAL_DISTANCE_KM = 60
+MAX_REAL_DISTANCE_KM = 10
 
 MIN_DT_SEC = 5
 MIN_DIST_KM = 0.1
 
-TP_SPEED_KMH = 200
-TP_SPEED_DIST_KM = 5
-TP_BIG_JUMP_KM = 30
-TP_BIG_JUMP_SEC = 300
+TP_SPEED_KMH = 100
+TP_SPEED_DIST_KM = 2
+TP_BIG_JUMP_KM = 5
+TP_BIG_JUMP_SEC = 600
 
 _log_counter = 0
 
@@ -177,7 +177,6 @@ class BotWorker(QThread):
                         "date_start_lte": self.target_date
                     })
                     
-                    # Один запрос БЕЗ limit и БЕЗ offset — сервер сам отдаст все миссии
                     api_url = f"https://ets.mos.ru/services/mission?is_archive=false&filters={filters_json}"
                     
                     log("INFO", f"Запрашиваю все миссии за {self.target_date} через API (без лимитов)...")
@@ -205,11 +204,9 @@ class BotWorker(QThread):
 
                 target_missions = []
                 for m in all_missions:
-                    # 1. Пропускаем архив
                     if m.get("is_archive"):
                         continue
                     
-                    # 2. Проверяем, что период миссии пересекается с выбранной датой
                     try:
                         d_start = datetime.fromisoformat(m.get("date_start", "").replace("Z", "+00:00")).replace(tzinfo=None)
                         d_end = datetime.fromisoformat(m.get("date_end", "").replace("Z", "+00:00")).replace(tzinfo=None)
@@ -219,7 +216,6 @@ class BotWorker(QThread):
                     if not (d_start <= target_day_end and d_end >= target_day_start):
                         continue
                     
-                    # 3. Проверяем, что путевой лист активен (если поле есть)
                     if m.get("waybill_status") and m.get("waybill_status") not in ("active", "closed"):
                         continue
                     
@@ -296,8 +292,7 @@ class BotWorker(QThread):
                         total_reqs = len(requests_js)
                         self.status_msg.emit(f"Треки: 0/{total_reqs}")
 
-                        # --- ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА ТРЕКОВ ---
-                        batch_size = 10  # Сколько запросов отправлять одновременно
+                        batch_size = 10
 
                         def fetch_one(req):
                             try:
@@ -324,7 +319,6 @@ class BotWorker(QThread):
                                 log("WARN", f"Ошибка запроса {req['car_id']}: {e}")
                                 return {"car_id": req["car_id"], "status": 0, "track": [], "sensors_raw": None}
 
-                        # Запускаем запросы батчами по 10 штук (параллельно внутри батча)
                         for i in range(0, total_reqs, batch_size):
                             batch = requests_js[i:i + batch_size]
                             
@@ -415,7 +409,8 @@ class BotWorker(QThread):
                         dist_km = math.sqrt((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2) * 111.0
                         if dist_km < MIN_DIST_KM: continue
                         speed_kmh = dist_km / (dt / 3600.0)
-                        is_tp = (speed_kmh > TP_SPEED_KMH and dist_km > TP_SPEED_DIST_KM) or (dist_km > TP_BIG_JUMP_KM and dt < TP_BIG_JUMP_SEC)
+                        # Считаем телепортом ЛЮБОЙ скачок больше 1 км за < 10 минут ИЛИ больше 5 км
+                        is_tp = (dist_km > 2.0 and dt < 300) or (dist_km > 10)
                         if is_tp:
                             teleports += 1
                             tp_idx_set.add(j + 1)
@@ -473,38 +468,50 @@ class BotWorker(QThread):
                         out_minutes = int((last_ts - out_of_base_since) / 60)
                         out_dist_km = last_out_dist
                         
-                # ---------- КЛАССИФИКАЦИЯ ----------
-                if is_fake_coords:
+                # ---------- КЛАССИФИКАЦИЯ (ЖЕЛЕЗОБЕТОННАЯ) ----------
+                # 1. Проверяем срывы (телепорты)
+                has_teleports = teleports > 0
+                
+                # Проверка на улетевшие точки (дальше 100 км)
+                has_far_points = False
+                for p in car.get("_track_raw", []):
+                    c = p.get("coords")
+                    if c and len(c) == 2:
+                        dist = math.sqrt((c[0]-BASE_LAT)**2 + (c[1]-BASE_LON)**2) * 111.0
+                        if dist > 100:
+                            has_far_points = True
+                            break
+
+                if has_teleports or has_far_points:
                     problem = "Некорректное местоположение ТС"
-                    detail = f"GPS-сбой: последняя точка в {last_dist_km:.0f} км от базы"
-                elif low_valid:
-                    problem = "Некорректный трек"
-                    detail = f"валидных {valid_pts}/{total_pts} ({valid_pts/total_pts*100:.0f}%)"
-                elif not has_track:
+                    detail = f"срыв трека (телепортов: {teleports})" if teleports > 0 else "GPS-сбой"
+                    
+                # 2. Смотрим на количество точек трека
+                elif valid_pts == 0:
+                    # Точек вообще нет. Проверяем, есть ли связь с БНСО
                     if bnso_no_data or bnso_broken:
                         problem = "Машина не на связи"
-                        detail = "нет трека, связи нет" if bnso_no_data else f"нет трека, связь {int(silent_min/60)} ч"
+                        detail = "нет трека, связи нет"
                     else:
-                        problem = "Некорректный трек"
-                        detail = f"точек {valid_pts}/{total_pts}"
-                elif teleports >= 1 and not last_on_base:
-                    problem = "Некорректное местоположение ТС"
-                    parts = [f"телепортов {teleports}"]
-                    if teleport_details: parts.append(f"({'; '.join(teleport_details)})")
-                    if last_dist_km is not None: parts.append(f"последняя точка в {last_dist_km:.0f} км от базы")
-                    detail = ", ".join(parts)
-                elif bnso_broken and valid_pts < 10:
+                        # Связь есть, но точек нет (машина молчит по GPS)
+                        problem = "Не работает БНСО"
+                        detail = "не отображается трек (связь есть)"
+                        
+                # 3. Точки есть, но их мало (меньше 50)
+                elif valid_pts < 50:
                     problem = "Не работает БНСО"
-                    detail = f"связь {int(silent_min/60)} ч, трек мал ({valid_pts} точек)"
+                    detail = f"не отображается трек (всего {valid_pts} точек)"
+                    
+                # 4. Всё в порядке (точек больше 50)
                 else:
                     problem = "Норма"
                     detail = f"точек {valid_pts}/{total_pts}"
-                    if bnso_broken or bnso_warn:
-                        detail += f", связь {int(silent_min/60)} ч"
-                    if teleports > 0: detail += f", было телепортов {teleports}"
-                    if last_on_base: detail += f", на базе ({last_dist_km:.1f} км)"
-                    elif out_minutes > 0 and out_dist_km is not None: detail += f", на выезде {out_minutes} мин в {out_dist_km:.0f} км"
-                    elif last_dist_km is not None: detail += f", последняя точка в {last_dist_km:.1f} км от базы"
+                    if last_on_base: 
+                        detail += f", на базе ({last_dist_km:.1f} км)"
+                    elif out_minutes > 0 and out_dist_km is not None: 
+                        detail += f", на выезде {out_minutes} мин в {out_dist_km:.0f} км"
+                    elif last_dist_km is not None: 
+                        detail += f", последняя точка в {last_dist_km:.1f} км от базы"
 
                 car["problem_type"] = problem
                 car["track_detail"] = detail
@@ -515,7 +522,7 @@ class BotWorker(QThread):
             offline_cars.sort(key=lambda x: (x["problem_type"] == "Норма", x["gov_number"]))
 
             # ============================================================
-            # ФИНАЛЬНЫЙ ПАРСИНГ ТОПЛИВА (ТОЛЬКО ЗДЕСЬ, ЧТОБЫ НЕ ДУБЛИРОВАТЬ)
+            # ФИНАЛЬНЫЙ ПАРСИНГ ТОПЛИВА
             # ============================================================
             for car in offline_cars:
                 raw = car.get("_raw_json")

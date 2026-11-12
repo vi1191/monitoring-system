@@ -2,139 +2,133 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Map</title>
+    <title>Map - Выбор маршрута</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; }
         #map { width: 100%; height: 100vh; }
-        
-        /* Стили для нашей новой кнопки */
-        .custom-map-btn {
-            position: absolute;
-            bottom: 30px;
-            left: 20px;
-            z-index: 1000;
-            width: 44px;
-            height: 44px;
-            background-color: rgba(30, 41, 59, 0.9); /* Темный полупрозрачный фон */
-            border-radius: 12px; /* Скругленные углы */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            transition: all 0.2s ease-in-out;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .custom-map-btn:hover {
-            background-color: rgba(30, 41, 59, 1);
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-        }
-
-        .custom-map-btn svg {
-            width: 24px;
-            height: 24px;
-            fill: none;
-            stroke: #94a3b8; /* Серый цвет иконки */
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-            transition: stroke 0.2s;
-        }
-
-        .custom-map-btn:hover svg {
-            stroke: #ffffff; /* Белый цвет при наведении */
-        }
-        
-        .custom-map-btn.active svg {
-            stroke: #3b82f6; /* Синий цвет, если дороги включены */
-        }
+        .custom-map-btn { position: absolute; bottom: 30px; left: 20px; z-index: 1000; width: 44px; height: 44px; background-color: rgba(30, 41, 59, 0.9); border-radius: 12px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); transition: all 0.2s ease-in-out; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .custom-map-btn:hover { background-color: rgba(30, 41, 59, 1); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4); }
+        .custom-map-btn svg { width: 24px; height: 24px; fill: none; stroke: #94a3b8; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.2s; }
+        .custom-map-btn:hover svg { stroke: #ffffff; }
+        .custom-map-btn.active svg { stroke: #3b82f6; }
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
 </head>
 <body>
     <div id="map"></div>
-
-    <!-- НАША НОВАЯ КНОПКА -->
     <div id="toggleStreetsBtn" class="custom-map-btn active" title="Скрыть/Показать дороги">
-        <svg viewBox="0 0 24 24">
-            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-            <circle cx="12" cy="12" r="3" />
-        </svg>
+        <svg viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
     </div>
-
     <script>
-        // 1. Инициализация карты
-        var map = L.map('map').setView([55.655, 37.485], 14);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        window.selectedZones = [];
+        window.map = L.map('map').setView([55.655, 37.485], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(window.map);
+        var streetsLayer = L.layerGroup().addTo(window.map);
+        var trackLayer = L.layerGroup().addTo(window.map);
 
-        var streetsLayer = L.layerGroup().addTo(map);
-        var trackLayer = L.layerGroup().addTo(map);
-
-        // 2. Логика работы новой кнопки
         var streetsVisible = true;
         var btn = document.getElementById('toggleStreetsBtn');
-        
         btn.addEventListener('click', function(e) {
-            e.stopPropagation(); // Чтобы клик не проваливался на карту
+            e.stopPropagation();
             streetsVisible = !streetsVisible;
-            
-            if (streetsVisible) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-
-            // Плавно скрываем/показываем дороги
+            if (streetsVisible) { btn.classList.add('active'); } else { btn.classList.remove('active'); }
             streetsLayer.eachLayer(function(layer) {
                 if (layer.setStyle) {
-                    layer.setStyle({ opacity: streetsVisible ? 0.7 : 0 });
+                    if (streetsVisible) { layer.setStyle({ opacity: layer._originalOpacity || 0.6, fillOpacity: layer._originalFillOpacity || 0.15 }); }
+                    else { layer.setStyle({ opacity: 0, fillOpacity: 0 }); }
                 }
             });
         });
 
-        // 3. Загрузка правильных улиц из OSM
-        fetch('streets_clipped.json')
+        var proj4Source = "+proj=tmerc +lat_0=55.66666666667 +lon_0=37.5 +k=1 +x_0=0 +y_0=0 +ellps=bessel +towgs84=316.151,78.924,589.65,-1.57273,2.69209,2.34693,8.4507 +units=m +no_defs";
+        var proj4Dest = "EPSG:4326";
+        proj4.defs("LOCAL", proj4Source);
+
+        fetch('road_areas_raw.geojson')
             .then(function(response) { return response.json(); })
             .then(function(data) {
-                console.log("Данные загружены. Найдено участков:", data.features ? data.features.length : 0);
-                
+                document.title = "Загружено: " + (data.features ? data.features.length : 0);
                 if (data.features) {
                     data.features.forEach(function(feature) {
-                        if (feature.coords && feature.coords.length > 0) {
+                        if (feature.geometry && feature.geometry.coordinates) {
+                            var coords = feature.geometry.coordinates[0];
+                            var latLngs = coords.map(function(c) {
+                                var lonlat = proj4("LOCAL", proj4Dest, [c[0], c[1]]);
+                                return [lonlat[1] - 0.0001, lonlat[0] - 0.0001];
+                            });
                             
-                            // Рисуем линию (polyline), так как это дороги
-                            L.polyline(feature.coords, {
-                                color: '#3b82f6', // Синий цвет
-                                weight: 3,
-                                opacity: 0.7
-                            }).bindTooltip(feature.name).addTo(streetsLayer);
+                            var name = feature.properties ? (feature.properties.name || "") : "";
+                            
+                            // --- УМНАЯ ПРОВЕРКА ТИПА ---
+                            var isOdh = false;
+                            // Если это МКАД или крупные проезды - ОДХ
+                            if (name.includes("МКАД") || name.includes("Проезд") || name.includes("Парк") || name.includes("Бульвар") || name.includes("Шоссе") || name.includes("Проспект") || name.includes("Улица")) {
+                                isOdh = true;
+                            }
+                            // Если это двор (есть "д." или "корп.") - не ОДХ
+                            if (name.includes("д.") || name.includes("корп.") || name.includes("дом")) {
+                                isOdh = false;
+                            }
+                            
+                            // Если type уже есть в properties - используем его
+                            if (feature.properties && feature.properties.type) {
+                                isOdh = feature.properties.type === "ODH";
+                            }
+
+                            var defaultColor = isOdh ? '#1e3a8a' : '#10b981'; // Синий для ОДХ, Зеленый для Дворов
+                            var defaultFill = isOdh ? '#3b82f6' : '#34d399';
+
+                            var polygon = L.polygon(latLngs, {
+                                color: defaultColor,
+                                weight: 2,
+                                opacity: 0.6,
+                                fillColor: defaultFill,
+                                fillOpacity: 0.15
+                            }).addTo(streetsLayer);
+                            
+                            polygon._originalOpacity = 0.6;
+                            polygon._originalFillOpacity = 0.15;
+                            polygon._originalColor = defaultColor;
+                            polygon._originalFillColor = defaultFill;
+                            
+                            polygon.bindTooltip(name, { sticky: true });
+
+                            polygon.on('click', function(e) {
+                                L.DomEvent.stopPropagation(e);
+                                if (polygon.isSelected) {
+                                    polygon.isSelected = false;
+                                    polygon.setStyle({ color: polygon._originalColor, weight: 2, fillColor: polygon._originalFillColor, fillOpacity: 0.15 });
+                                    var idx = window.selectedZones.findIndex(z => z.name === name);
+                                    if (idx > -1) window.selectedZones.splice(idx, 1);
+                                } else {
+                                    polygon.isSelected = true;
+                                    polygon.setStyle({ color: '#ff0000', weight: 4, fillColor: '#ff0000', fillOpacity: 0.4 });
+                                    window.selectedZones.push({ name: name, type: isOdh ? 'ODH' : 'MUNICIPAL' });
+                                }
+                                
+                                if (window.qtWebChannel) {
+                                    window.qtWebChannel.selectedZonesChanged(window.selectedZones.map(z => z.name));
+                                }
+                            });
                         }
                     });
-                    console.log("Улицы успешно отрисованы!");
                 }
             })
-            .catch(function(error) { 
-                console.error('ОШИБКА ЗАГРУЗКИ:', error); 
-            });
+            .catch(function(error) { document.title = "Ошибка: " + error; });
 
-        // 4. Функция для отрисовки треков машин (вызывается из Python)
         window.drawTrack = function(coords, carNumber) {
-            trackLayer.clearLayers(); 
+            trackLayer.clearLayers();
             if (!coords || coords.length === 0) return;
-            
             var polyline = L.polyline(coords, { color: 'red', weight: 4, opacity: 0.8 }).addTo(trackLayer);
             L.marker(coords[coords.length - 1]).bindPopup("Машина: " + carNumber).addTo(trackLayer);
-            
-            map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+            window.map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
         };
 
-        // 5. Функция для очистки трека (вызывается из Python при повторном клике)
         window.clearTrack = function() {
             trackLayer.clearLayers();
-            map.setView([55.655, 37.485], 14);
+            window.map.setView([55.655, 37.485], 14);
         };
     </script>
 </body>

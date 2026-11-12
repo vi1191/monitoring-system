@@ -3,11 +3,11 @@ import time
 from playwright.sync_api import sync_playwright
 
 def run_estp_dry_run(cars_list, login_str, password_str, employee_str):
-    print(f"--- Запуск ЕСТП. Машин к отправке: {len(cars_list)} ---")
+    print(f"--- Запуск ЕСТП (API-режим). Машин к отправке: {len(cars_list)} ---")
     
     with sync_playwright() as p:
-        # headless=False обязателен, чтобы вы видели процесс
-        browser = p.chromium.launch(headless=False) 
+        # headless=True — браузер работает в фоне
+        browser = p.chromium.launch(headless=True) 
         context = browser.new_context()
         page = context.new_page()
         
@@ -15,7 +15,6 @@ def run_estp_dry_run(cars_list, login_str, password_str, employee_str):
             # 1. Авторизация
             page.goto("https://estp.dgkh.msk.ru/", wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
-            
             page.fill('input[type="text"]', login_str)
             page.fill('input[type="password"]', password_str)
             page.click('button[type="submit"]')
@@ -23,16 +22,13 @@ def run_estp_dry_run(cars_list, login_str, password_str, employee_str):
             
             # 2. Переход в Телеметрию
             page.goto("https://estp.dgkh.msk.ru/index.php?r=telemetry", wait_until="domcontentloaded")
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(3000)
             
-            # --- ВЫБОР ОРГАНИЗАЦИИ (через JS, так как это кастомный список) ---
+            # 3. Выбор организации
             print("Выбираем организацию 'Жилищник Тропарево-Никулино'...")
             try:
-                # Кликаем по выпадающему списку, чтобы он открылся
                 page.evaluate("document.querySelector('#car_org_chosen a.chosen-single').click()")
                 page.wait_for_timeout(1000)
-                
-                # Ищем в выпавшем списке нужный текст и кликаем по нему
                 page.evaluate('''
                     var options = document.querySelectorAll('#car_org_chosen .chosen-results li');
                     for (var i = 0; i < options.length; i++) {
@@ -42,106 +38,106 @@ def run_estp_dry_run(cars_list, login_str, password_str, employee_str):
                         }
                     }
                 ''')
-                page.wait_for_timeout(3000) # Ждем, пока карта и список обновятся
+                page.wait_for_timeout(2000)
                 print("Организация выбрана.")
             except Exception as e:
                 print(f"! Не удалось выбрать организацию: {e}")
-            # -----------------------------------------------------------------
             
-            # 3. Цикл по машинам
+            # 4. Цикл по машинам
             for index, car_data in enumerate(cars_list):
                 gov = car_data['gov_number']
-                sla_type = car_data.get('sla', 'Другое')
+                sla_type = car_data.get('sla', 'Некорректный трек ТС')
                 comment = car_data.get('comment', '')
                 
-                print(f"\n[{index+1}/{len(cars_list)}] Обработка {gov} (Тип: {sla_type})...")
+                print(f"[{index+1}/{len(cars_list)}] Отправка для {gov}...")
                 
                 try:
-                    # Поиск машины
+                    # Ищем машину
                     search_input = page.locator('input[name="search_ts"]')
                     search_input.fill(gov)
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(1500)
                     
-                    # Находим элемент списка по тексту
-                    car_item = page.locator(f'li:has-text("{gov}")').first
-                    if car_item.count() == 0:
-                        print(f"  ! Машина {gov} не найдена.")
-                        continue
-                        
-                    car_item.scroll_into_view_if_needed()
-                    page.wait_for_timeout(500)
-                    
-                    # Кликаем через JavaScript (игнорирует видимость и границы экрана)
-                    print(f"  Кликаем по ссылке {gov} через JS...")
-                    page.evaluate(f'''
-                        var link = document.querySelector('a.reg_num[name*="car_reg_num"]');
-                        if (link && link.innerText.includes("{gov}")) {{
-                            link.click();
-                        }} else {{
-                            var allLinks = document.querySelectorAll('a.reg_num');
-                            for (var i = 0; i < allLinks.length; i++) {{
-                                if (allLinks[i].innerText.includes("{gov}")) {{
-                                    allLinks[i].click();
+                    # Получаем ID машины и CSRF-токен (БЕЗ return)
+                    result = page.evaluate(f'''
+                        (function() {{
+                            var links = document.querySelectorAll('a.reg_num');
+                            var foundId = null;
+                            for (var i = 0; i < links.length; i++) {{
+                                if (links[i].innerText.includes("{gov}")) {{
+                                    var nameAttr = links[i].getAttribute('name');
+                                    if (nameAttr) {{
+                                        foundId = nameAttr.split('_').pop();
+                                    }}
                                     break;
                                 }}
                             }}
-                        }}
+                            
+                            var csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || 
+                                            document.querySelector('input[name="_csrf"]')?.value;
+                            
+                            return {{ id: foundId, csrf: csrfToken }};
+                        }})()
                     ''')
-                    print(f"  Кликнули по машине {gov}. Ждем загрузки карточки...")
                     
-                    # Ждем, пока в карточке появится номер машины
-                    try:
-                        page.wait_for_selector(f'th:has-text("Наименование") + td:has-text("{gov}")', timeout=10000)
-                        print("  Карточка машины загружена.")
-                    except:
-                        print("  ! Карточка машины не загрузилась, но пробуем продолжить...")
+                    request_id = result.get('id') if result else None
+                    csrf_token = result.get('csrf') if result else None
+                    
+                    if not request_id:
+                        print(f"  ! Не найден ID для {gov}")
+                        continue
+                    
+                    if not csrf_token:
+                        print(f"  ! Не найден CSRF-токен для {gov}")
+                        continue
+                    
+                    print(f"  Найден ID: {request_id}, CSRF: {csrf_token[:10]}...")
+                    
+                    # Определяем код SLA
+                    sla_code = "14" if "Некорректный" in sla_type else "10"
+                    
+                    # Формируем данные с CSRF-токеном
+                    form_data = {
+                        '_csrf': csrf_token,
+                        'request[id]': request_id,
+                        'request[sla]': sla_code,
+                        'request[text]': comment,
+                        'request[gauge]': '1',
+                        'request[base]': '423',
+                        'request[contact]': employee_str
+                    }
+                    
+                    # Отправляем запрос через page.request
+                    response = page.request.post(
+                        "https://estp.dgkh.msk.ru/index.php?r=telemetry/create-estp-request",
+                        form=form_data
+                    )
+                    
+                    if response.status == 200:
+                        try:
+                            # Пытаемся прочитать JSON-ответ
+                            json_resp = response.json()
+                            if json_resp.get("error") == 0:
+                                # Если error == 0, значит заявка создана
+                                msg = json_resp.get("output", "Заявка создана")
+                                print(f"  ✅ {msg}")
+                            else:
+                                print(f"  ❌ Ошибка: {json_resp.get('output', 'Неизвестная ошибка')}")
+                        except Exception:
+                            # Если ответ не JSON, проверяем как текст
+                            text = response.text()
+                            if "успешно" in text.lower():
+                                print(f"  ✅ Заявка для {gov} создана (текстовый ответ).")
+                            else:
+                                print(f"  ! Неизвестный ответ: {text[:200]}")
+                    else:
+                        print(f"  ! Ошибка сервера: HTTP {response.status}")
                         
-                    page.wait_for_timeout(2000)
-                    
-                    # Открываем окно заявки через JS
-                    page.evaluate("document.querySelector('button#popup_btn_estp').click()")
-                    page.wait_for_timeout(2000)
-                    
-                    # Заполняем поля
-                    page.fill('input#estp_contact_string', employee_str)
-                    page.select_option('select#estp_request_sla', label=sla_type)
-                    page.fill('textarea#estp_request_text', comment)
-                    page.wait_for_timeout(1000)
-                    
-                    # === ОТПРАВКА ===
-                    print(f"  Заполнено. Отправляем...")
-                    
-                    # Скриншот ДО нажатия
-                    page.screenshot(path=f"screenshot_before_{gov}.png")
-                    
-                    # Нажимаем кнопку "Отправить заявку"
-                    page.click('button:has-text("Отправить заявку")')
-                    print(f"  Кнопка 'Отправить' нажата. Ждем реакцию сайта...")
-                    
-                    page.wait_for_timeout(4000)
-                    
-                    # Скриншот ПОСЛЕ нажатия
-                    page.screenshot(path=f"screenshot_after_{gov}.png")
-                    
-                    # Проверяем, не появилось ли всплывающее окно с подтверждением
-                    try:
-                        if page.locator('button:has-text("Да")').count() > 0:
-                            page.locator('button:has-text("Да")').first.click()
-                            print("  Нажато подтверждение 'Да'.")
-                            page.wait_for_timeout(2000)
-                    except:
-                        pass
-                        
-                    print(f"  Заявка для {gov} обработана.")
+                    page.wait_for_timeout(500)
                     
                 except Exception as e:
-                    print(f"  ! Ошибка при обработке {gov}: {e}")
-                    # Перезагружаем страницу, чтобы начать заново
-                    page.goto("https://estp.dgkh.msk.ru/index.php?r=telemetry", wait_until="domcontentloaded")
-                    page.wait_for_timeout(3000)
+                    print(f"  ! Ошибка при отправке для {gov}: {e}")
             
             print("\nВсе заявки обработаны. Закрываем браузер...")
-            page.wait_for_timeout(3000) 
             
         except Exception as e:
             print(f"Критическая ошибка: {e}")

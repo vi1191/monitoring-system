@@ -5,6 +5,9 @@ import time
 import http.server
 import socketserver
 import threading
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from functools import partial
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -278,15 +281,16 @@ class ConfirmTicketsDialog(QDialog):
             combo.addItems(self.sla_options)
             
             prob_text = car['problem_type']
+            # Определяем классификацию и комментарий на основе статуса из таблицы
             if 'Некорректное местоположение' in prob_text or 'Некорректный трек' in prob_text:
                 combo.setCurrentText("Некорректный трек ТС")
-                default_comment = "Некорректное местоположение ТС"
+                default_comment = "Некорректное местоположение ТС" # Единый текст
             elif 'БНСО' in prob_text or 'не на связи' in prob_text:
                 combo.setCurrentText("Проведение работ по восстановлению неработающего БНСО")
                 default_comment = "машина не выходит на связь"
             else:
                 combo.setCurrentText("Другое")
-                default_comment = ""  # Оставляем пустым для "Норма"
+                default_comment = ""
                 
             # --- НОВЫЙ КОД: Поле с автодополнением ---
             line_comment = QLineEdit()
@@ -483,6 +487,14 @@ class MainWindow(QMainWindow):
         
         self.web_view = QWebEngineView()
         map_layout.addWidget(self.web_view)
+        # Включаем возможность открытия консоли разработчика
+        from PyQt6.QtWebEngineCore import QWebEngineSettings
+        self.web_view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        self.web_view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.JavascriptEnabled, True
+        )
         self.splitter.addWidget(self.map_container)
         self.splitter.setSizes([650, 1000])
         main_layout.addWidget(self.splitter, 1)
@@ -493,10 +505,15 @@ class MainWindow(QMainWindow):
         self.server_thread = LocalServerThread(directory=map_path, port=8000)
         self.server_thread.start()
         time.sleep(0.5)
-        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=8"))
+        self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=25"))
 
         ticket_btn_layout = QHBoxLayout()
         ticket_btn_layout.addStretch(1)
+        self.btn_devtools = QPushButton('Консоль')
+        self.btn_devtools.setFixedHeight(45)
+        self.btn_devtools.setMinimumWidth(100)
+        self.btn_devtools.clicked.connect(self.open_dev_tools)
+        ticket_btn_layout.addWidget(self.btn_devtools)
         self.btn_create_ticket = QPushButton('Создать заявки в ЕСТП')
         self.btn_create_ticket.setFixedHeight(45)
         self.btn_create_ticket.setMinimumWidth(320)
@@ -522,28 +539,43 @@ class MainWindow(QMainWindow):
         self.is_running = False
         self.start_collection()
 
+        # Горячая клавиша для консоли (Ctrl+Shift+I)
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        self.dev_tools_shortcut = QShortcut(QKeySequence("Ctrl+Shift+I"), self)
+        self.dev_tools_shortcut.activated.connect(self.open_dev_tools)
+
     def open_settings(self):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.lbl_status.setText("Доступы сохранены.")
 
+    def open_dev_tools(self):
+        self.web_view.page().setDevToolsPage(self.web_view.page())
+
     @staticmethod
     def row_color(status):
         text = status.casefold()
-        if 'некорректное местоположение' in text or 'срыв трека' in text:
+        
+        # Красный - проблемы с треком (срывы, телепорты, неверные координаты)
+        if 'некорректное местоположение' in text or 'некорректный трек' in text or 'срыв трека' in text:
             return QColor('#ffd9dd')
-        if 'некорректный трек' in text:
-            return QColor('#fff2c9')
-        if 'не на связи' in text:
-            return QColor('#e6e6e6')
-        if 'не работает' in text or 'срыв связи' in text:
+            
+        # Оранжевый - нет трека, но связь есть (БНСО не работает)
+        if 'не работает бнсо' in text or 'не отображается трек' in text:
             return QColor('#ffe2bd')
-        if 'нет трека' in text or 'молчит' in text:
-            return QColor('#fff2c9')
+            
+        # Серый - машина не на связи
+        if 'машина не на связи' in text or 'не на связи' in text:
+            return QColor('#e6e6e6')
+            
+        # Ошибки
         if 'ошибка' in text or 'не удалось' in text:
             return QColor('#e7ebf0')
+            
+        # Норма (зеленый)
         if text == 'норма':
             return QColor('#e8f7e9')
+            
         return QColor('#ffffff')
 
     @staticmethod
@@ -662,20 +694,76 @@ class MainWindow(QMainWindow):
             self.copy_selected_rows()
 
     def export_to_csv(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить как CSV", "report.csv", "CSV files (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить отчет", "Отчет_ЕТС.xlsx", "Excel files (*.xlsx)")
         if not path:
             return
-        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.writer(f, delimiter=';')
-            headers = [self.table.horizontalHeaderItem(i).text() for i in range(self.table.columnCount())]
-            writer.writerow(headers)
-            for row in range(self.table.rowCount()):
-                row_data = []
-                for col in range(self.table.columnCount()):
-                    item = self.table.item(row, col)
-                    row_data.append(item.text() if item else "")
-                writer.writerow(row_data)
-        self.lbl_status.setText(f"Сохранено в {path}")
+
+        try:
+            # Создаем книгу Excel
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Мониторинг"
+
+            # Заголовки
+            headers = [
+                '✓', 'Номер ТС', 'Марка', 'Задание', 'Вып. %', 
+                'Топливо выезд', 'Топливо заправка', 'Топливо факт', 
+                'Пробег, км', 'Связь / трек', 'Детали'
+            ]
+            
+            # Стили
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+            center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                                 top=Side(style='thin'), bottom=Side(style='thin'))
+
+            # Записываем заголовки
+            for col_num, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.value = header
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = center_alignment
+                cell.border = thin_border
+
+            # Записываем данные
+            for row_idx in range(self.table.rowCount()):
+                for col_idx in range(self.table.columnCount()):
+                    item = self.table.item(row_idx, col_idx)
+                    value = item.text() if item else ""
+                    
+                    cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+                    cell.value = value
+                    cell.border = thin_border
+                    cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+                    # Красим ячейки в зависимости от статуса (колонка "Связь/трек", индекс 9)
+                    if col_idx == 9:
+                        status = str(value).casefold()
+                        if 'некорректное' in status or 'срыв' in status:
+                            cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid") # Красный
+                        elif 'не работает' in status:
+                            cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid") # Оранжевый
+                        elif 'не на связи' in status:
+                            cell.fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid") # Серый
+                        elif status == 'норма':
+                            cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Зеленый
+
+            # Настройка ширины колонок
+            column_widths = [5, 15, 25, 20, 10, 15, 15, 15, 15, 25, 50]
+            for i, width in enumerate(column_widths, 1):
+                ws.column_dimensions[get_column_letter(i)].width = width
+
+            # Закрепляем шапку
+            ws.freeze_panes = "A2"
+
+            # Сохраняем
+            wb.save(path)
+            self.lbl_status.setText(f"Отчет сохранен в {path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить отчет: {e}")
 
     def create_tickets(self):
         selected_cars = []
