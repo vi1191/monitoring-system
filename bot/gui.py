@@ -11,6 +11,7 @@ from openpyxl.utils import get_column_letter
 from functools import partial
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineSettings
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -20,7 +21,7 @@ from PyQt6.QtWidgets import (
     QDateEdit, QSplitter, QComboBox, QCompleter
 )
 from PyQt6.QtCore import Qt, QDate, QTimer
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QPainter, QShortcut, QKeySequence
 from bot_worker import BotWorker
 
 try:
@@ -159,7 +160,6 @@ class SettingsDialog(QDialog):
         form_estp.addRow("Логин:", self.estp_login_input)
         form_estp.addRow("Пароль:", estp_pass_row)
 
-        # Поле для ФИО сотрудника
         self.estp_employee_input = QLineEdit()
         self.estp_employee_input.setPlaceholderText("Иванов И.И.")
         form_estp.addRow("ФИО сотрудника:", self.estp_employee_input)
@@ -276,47 +276,46 @@ class ConfirmTicketsDialog(QDialog):
             c_layout.setContentsMargins(2, 2, 2, 2)
             c_layout.setSpacing(2)
             
-            # Классификация
             combo = QComboBox()
             combo.addItems(self.sla_options)
             
             prob_text = car['problem_type']
-            # Определяем классификацию и комментарий на основе статуса из таблицы
+            
+            # Определяем классификацию и комментарий на основе статуса
             if 'Некорректное местоположение' in prob_text or 'Некорректный трек' in prob_text:
                 combo.setCurrentText("Некорректный трек ТС")
-                default_comment = "Некорректное местоположение ТС" # Единый текст
-            elif 'БНСО' in prob_text or 'не на связи' in prob_text:
+                default_comment = "Некорректное местоположение ТС"
+            elif 'Не работает БНСО' in prob_text:
+                # Оранжевый статус (связь есть, но трек не идет)
+                combo.setCurrentText("Проведение работ по восстановлению неработающего БНСО")
+                default_comment = "не отображается трек"
+            elif 'не на связи' in prob_text:
+                # Серый статус (связи нет вообще)
                 combo.setCurrentText("Проведение работ по восстановлению неработающего БНСО")
                 default_comment = "машина не выходит на связь"
             else:
                 combo.setCurrentText("Другое")
                 default_comment = ""
                 
-            # --- НОВЫЙ КОД: Поле с автодополнением ---
             line_comment = QLineEdit()
             line_comment.setText(default_comment)
             
-            # Создаем подсказки для поля
             completer = QCompleter(self.comment_options, self)
             completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             completer.setFilterMode(Qt.MatchFlag.MatchContains)
             line_comment.setCompleter(completer)
 
-                        # Показывать все подсказки при клике на пустое поле
             def show_all_on_click(event, line=line_comment, comp=completer):
                 line.setCompleter(comp)
-                # Вызываем стандартный обработчик клика
                 QLineEdit.mousePressEvent(line, event)
-                # Если поле пустое, показываем полный список
                 if line.text() == "":
                     comp.setCompletionPrefix("")
                     comp.complete()
 
             line_comment.mousePressEvent = show_all_on_click
             
-            # Добавляем в контейнер
-            c_layout.addWidget(combo)         # Классификация
-            c_layout.addWidget(line_comment)  # Поле с комментарием
+            c_layout.addWidget(combo)
+            c_layout.addWidget(line_comment)
             
             self.table.setCellWidget(row, 2, container)
             self.table.setRowHeight(row, 60)
@@ -345,8 +344,6 @@ class ConfirmTicketsDialog(QDialog):
             
             container = self.table.cellWidget(row, 2)
             combo = container.findChild(QComboBox)
-            # Второй QComboBox — это шаблон, он нам не нужен для отправки
-            # Третий элемент — QLineEdit (итоговый текст)
             line_comment = container.findChild(QLineEdit)
             
             final_cars.append({
@@ -392,6 +389,7 @@ class MainWindow(QMainWindow):
         main_layout.setSpacing(10)
         central_widget.setLayout(main_layout)
 
+        # --- ВЕРХНЯЯ ПАНЕЛЬ С КНОПКАМИ ---
         top_layout = QHBoxLayout()
         self.btn_refresh = QPushButton('Обновить данные')
         self.btn_refresh.setFixedHeight(40)
@@ -405,10 +403,9 @@ class MainWindow(QMainWindow):
         self.btn_settings.setFixedHeight(40)
         self.btn_settings.clicked.connect(self.open_settings)
 
-        # Таймер отключен
-        # self.timer = QTimer(self)
-        # self.timer.timeout.connect(self.auto_update)
-        # self.timer.start(300000)
+        self.btn_devtools = QPushButton('Консоль')
+        self.btn_devtools.setFixedHeight(40)
+        self.btn_devtools.clicked.connect(self.open_dev_tools)
 
         self.lbl_status = QLabel('Готов к работе')
         self.lbl_status.setStyleSheet('font-weight: bold;')
@@ -416,9 +413,11 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.btn_refresh)
         top_layout.addWidget(self.btn_export)
         top_layout.addWidget(self.btn_settings)
+        top_layout.addWidget(self.btn_devtools)
         top_layout.addWidget(self.lbl_status, 1)
         main_layout.addLayout(top_layout)
 
+        # --- ДАТА ПРОВЕРКИ ---
         date_layout = QHBoxLayout()
         date_layout.setSpacing(8)
         lbl_date = QLabel('Дата проверки:')
@@ -434,6 +433,7 @@ class MainWindow(QMainWindow):
         date_layout.addStretch(1)
         main_layout.addLayout(date_layout)
 
+        # --- ПОИСК ---
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText('Поиск по номеру, марке, статусу или деталям...')
@@ -444,6 +444,7 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.lbl_count)
         main_layout.addLayout(search_layout)
 
+        # --- ТАБЛИЦА ---
         self.table = QTableWidget()
         headers = [
             '✓', 'Номер ТС', 'Марка', 'Задание', 'Вып.\n%', 
@@ -459,7 +460,6 @@ class MainWindow(QMainWindow):
         header.setMinimumSectionSize(40)
         header.setFixedHeight(50)
         
-        # Ширина "Задание" (индекс 3) увеличена до 220
         widths = (30, 100, 160, 160, 45, 80, 100, 90, 80, 180, 250)
         for col, width in enumerate(widths):
             self.table.setColumnWidth(col, width)
@@ -481,20 +481,22 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.table)
         
+        # --- КАРТА ---
         self.map_container = QWidget()
         map_layout = QVBoxLayout(self.map_container)
         map_layout.setContentsMargins(0, 0, 0, 0)
         
         self.web_view = QWebEngineView()
-        map_layout.addWidget(self.web_view)
-        # Включаем возможность открытия консоли разработчика
-        from PyQt6.QtWebEngineCore import QWebEngineSettings
-        self.web_view.settings().setAttribute(
-            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
-        )
+        
+        # Настройки WebEngine
         self.web_view.settings().setAttribute(
             QWebEngineSettings.WebAttribute.JavascriptEnabled, True
         )
+        self.web_view.settings().setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        
+        map_layout.addWidget(self.web_view)
         self.splitter.addWidget(self.map_container)
         self.splitter.setSizes([650, 1000])
         main_layout.addWidget(self.splitter, 1)
@@ -507,13 +509,9 @@ class MainWindow(QMainWindow):
         time.sleep(0.5)
         self.web_view.setUrl(QUrl("http://127.0.0.1:8000/index.html?v=25"))
 
+        # --- КНОПКА ЕСТП ---
         ticket_btn_layout = QHBoxLayout()
         ticket_btn_layout.addStretch(1)
-        self.btn_devtools = QPushButton('Консоль')
-        self.btn_devtools.setFixedHeight(45)
-        self.btn_devtools.setMinimumWidth(100)
-        self.btn_devtools.clicked.connect(self.open_dev_tools)
-        ticket_btn_layout.addWidget(self.btn_devtools)
         self.btn_create_ticket = QPushButton('Создать заявки в ЕСТП')
         self.btn_create_ticket.setFixedHeight(45)
         self.btn_create_ticket.setMinimumWidth(320)
@@ -539,40 +537,48 @@ class MainWindow(QMainWindow):
         self.is_running = False
         self.start_collection()
 
-        # Горячая клавиша для консоли (Ctrl+Shift+I)
-        from PyQt6.QtGui import QShortcut, QKeySequence
-        self.dev_tools_shortcut = QShortcut(QKeySequence("Ctrl+Shift+I"), self)
-        self.dev_tools_shortcut.activated.connect(self.open_dev_tools)
+    def open_dev_tools(self):
+        try:
+            from PyQt6.QtWidgets import QMainWindow
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            
+            if not hasattr(self, 'dev_tools_window'):
+                self.dev_tools_window = QMainWindow()
+                self.dev_tools_window.setWindowTitle("Консоль разработчика")
+                self.dev_tools_window.resize(1000, 600)
+                
+                self.dev_tools_view = QWebEngineView()
+                self.dev_tools_window.setCentralWidget(self.dev_tools_view)
+                
+                self.web_view.page().setDevToolsPage(self.dev_tools_view.page())
+            
+            self.dev_tools_window.show()
+            self.dev_tools_window.raise_()
+            self.dev_tools_window.activateWindow()
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось открыть консоль: {e}")
 
     def open_settings(self):
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.lbl_status.setText("Доступы сохранены.")
 
-    def open_dev_tools(self):
-        self.web_view.page().setDevToolsPage(self.web_view.page())
-
     @staticmethod
     def row_color(status):
         text = status.casefold()
         
-        # Красный - проблемы с треком (срывы, телепорты, неверные координаты)
         if 'некорректное местоположение' in text or 'некорректный трек' in text or 'срыв трека' in text:
             return QColor('#ffd9dd')
             
-        # Оранжевый - нет трека, но связь есть (БНСО не работает)
         if 'не работает бнсо' in text or 'не отображается трек' in text:
             return QColor('#ffe2bd')
             
-        # Серый - машина не на связи
         if 'машина не на связи' in text or 'не на связи' in text:
             return QColor('#e6e6e6')
             
-        # Ошибки
         if 'ошибка' in text or 'не удалось' in text:
             return QColor('#e7ebf0')
             
-        # Норма (зеленый)
         if text == 'норма':
             return QColor('#e8f7e9')
             
@@ -699,26 +705,22 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # Создаем книгу Excel
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Мониторинг"
 
-            # Заголовки
             headers = [
                 '✓', 'Номер ТС', 'Марка', 'Задание', 'Вып. %', 
                 'Топливо выезд', 'Топливо заправка', 'Топливо факт', 
                 'Пробег, км', 'Связь / трек', 'Детали'
             ]
             
-            # Стили
             header_font = Font(bold=True, color="FFFFFF")
             header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
             center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                                  top=Side(style='thin'), bottom=Side(style='thin'))
 
-            # Записываем заголовки
             for col_num, header in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num)
                 cell.value = header
@@ -727,7 +729,6 @@ class MainWindow(QMainWindow):
                 cell.alignment = center_alignment
                 cell.border = thin_border
 
-            # Записываем данные
             for row_idx in range(self.table.rowCount()):
                 for col_idx in range(self.table.columnCount()):
                     item = self.table.item(row_idx, col_idx)
@@ -738,27 +739,22 @@ class MainWindow(QMainWindow):
                     cell.border = thin_border
                     cell.alignment = Alignment(vertical="center", wrap_text=True)
 
-                    # Красим ячейки в зависимости от статуса (колонка "Связь/трек", индекс 9)
                     if col_idx == 9:
                         status = str(value).casefold()
                         if 'некорректное' in status or 'срыв' in status:
-                            cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid") # Красный
+                            cell.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
                         elif 'не работает' in status:
-                            cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid") # Оранжевый
+                            cell.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
                         elif 'не на связи' in status:
-                            cell.fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid") # Серый
+                            cell.fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
                         elif status == 'норма':
-                            cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid") # Зеленый
+                            cell.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 
-            # Настройка ширины колонок
             column_widths = [5, 15, 25, 20, 10, 15, 15, 15, 15, 25, 50]
             for i, width in enumerate(column_widths, 1):
                 ws.column_dimensions[get_column_letter(i)].width = width
 
-            # Закрепляем шапку
             ws.freeze_panes = "A2"
-
-            # Сохраняем
             wb.save(path)
             self.lbl_status.setText(f"Отчет сохранен в {path}")
 

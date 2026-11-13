@@ -26,3 +26,7 @@ Thumbs.db
 *.log
 # Скриншоты отладки
 *.png
+*.pbf
+*.state
+streets_roads_clean.geojson
+get_roads_osmnx.py
