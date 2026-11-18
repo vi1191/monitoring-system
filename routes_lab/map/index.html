@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Закрепление маршрутов — ГБУ «Жилищник»</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+    :root {
+        --ink: #0b1220;
+        --glass: rgba(15, 23, 42, .88);
+        --glass-2: rgba(15, 23, 42, .80);
+        --line: rgba(148, 163, 184, .22);
+        --text: #e6edf7;
+        --muted: #93a3bd;
+        --accent: #38bdf8;
+        --ok: #34d399;
+        --warn: #fbbf24;
+        --bad: #f87171;
+        --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
+    body { font: 13px/1.45 Inter, "Segoe UI", system-ui, sans-serif; color: var(--text); }
+    #map { position: absolute; inset: 0; background: #eef2f6; }
+    .leaflet-interactive { outline: none !important; }
+    .leaflet-container { font: 13px Inter, "Segoe UI", system-ui, sans-serif; }
+    /* OSM tiles are colorful; fading them keeps colored zones readable. */
+    .tiles-soft { filter: grayscale(.45) saturate(.55) brightness(1.05) contrast(.94); }
+
+    /* ---------- shared panel ---------- */
+    .panel {
+        position: absolute; z-index: 1000; background: var(--glass);
+        border: 1px solid var(--line); border-radius: var(--radius);
+        box-shadow: 0 10px 30px rgba(2, 6, 23, .35);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    }
+    .panel h3 {
+        margin: 0; padding: 9px 12px; font-size: 11px; font-weight: 700;
+        letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+        border-bottom: 1px solid var(--line);
+    }
+    #ctrlHead { cursor: pointer; }
+    /* Right rail stacks both panels so they can never overlap each other. */
+    #rail {
+        position: absolute; z-index: 1000; top: 12px; right: 12px; bottom: 12px;
+        width: 296px; display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+    }
+    #rail > .panel { position: static; pointer-events: auto; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    /* ---------- top bar ---------- */
+    #topbar { top: 12px; left: 12px; display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+    .seg { display: flex; background: rgba(148, 163, 184, .14); border-radius: 10px; padding: 3px; gap: 2px; }
+    .seg button {
+        border: 0; background: transparent; color: var(--muted); cursor: pointer;
+        font: 600 12px Inter, system-ui, sans-serif; padding: 6px 11px; border-radius: 8px;
+        transition: all .16s ease;
+    }
+    .seg button:hover { color: var(--text); }
+    .seg button.on { background: var(--accent); color: #04121f; box-shadow: 0 2px 10px rgba(56, 189, 248, .35); }
+    .tgl {
+        border: 1px solid var(--line); background: rgba(148, 163, 184, .12); color: var(--muted);
+        font: 600 12px Inter, system-ui, sans-serif; padding: 7px 11px; border-radius: 9px; cursor: pointer;
+        transition: all .16s ease;
+    }
+    .tgl:hover { color: var(--text); border-color: rgba(148, 163, 184, .45); }
+    .tgl.on { background: rgba(56, 189, 248, .18); border-color: var(--accent); color: #bfeaff; }
+    .tgl.go { background: rgba(52, 211, 153, .16); border-color: var(--ok); color: #b8f5dd; }
+    .tgl.go:hover { background: rgba(52, 211, 153, .28); }
+    #dayPick {
+        background: rgba(148, 163, 184, .12); border: 1px solid var(--line); color: var(--text);
+        border-radius: 9px; padding: 6px 8px; font: 600 12px Inter, system-ui, sans-serif;
+        color-scheme: dark;
+    }
+    #dayPick:focus { outline: 1px solid var(--accent); }
+
+    /* ---------- sync / ETS status strip ---------- */
+    /* Same row as the topbar, to the right of the buttons (see positionSync). */
+    #sync {
+        position: absolute; top: 12px; left: 700px; z-index: 1100;
+        display: none; align-items: center; gap: 10px; padding: 8px 14px;
+        background: var(--glass); border: 1px solid var(--line); border-radius: 999px;
+        box-shadow: 0 10px 30px rgba(2, 6, 23, .45); font-size: 12.5px; white-space: nowrap;
+    }
+    #syncText { overflow: hidden; text-overflow: ellipsis; }
+    #sync.on { display: flex; }
+    #sync.err { border-color: var(--bad); }
+    #sync .spin {
+        width: 13px; height: 13px; flex: none; border-radius: 50%;
+        border: 2px solid rgba(148, 163, 184, .35); border-top-color: var(--accent);
+        animation: spin .8s linear infinite;
+    }
+    #sync.err .spin { border-color: var(--bad); border-top-color: var(--bad); animation: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------- shift panel ---------- */
+    #shift { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    #carSearch { padding: 7px 8px; border-bottom: 1px solid var(--line); display: flex; gap: 6px; }
+    #carFilter {
+        flex: 1; min-width: 0; background: rgba(148, 163, 184, .12); border: 1px solid var(--line);
+        border-radius: 8px; color: var(--text); padding: 6px 9px; font: 500 12px Inter, system-ui, sans-serif;
+    }
+    #carFilter:focus { outline: 1px solid var(--accent); }
+    #carFilter::placeholder { color: var(--muted); }
+    #sorts { flex: none; }
+    #sorts button { padding: 5px 8px; font-size: 11px; }
+    #carList { overflow: auto; padding: 6px; }
+    .car {
+        display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 9px;
+        cursor: pointer; transition: background .14s ease; border: 1px solid transparent;
+    }
+    .car:hover { background: rgba(148, 163, 184, .13); }
+    .car.on { background: rgba(56, 189, 248, .14); border-color: rgba(56, 189, 248, .5); }
+    .car .dot { width: 11px; height: 11px; border-radius: 4px; flex: none; box-shadow: 0 0 0 3px rgba(255, 255, 255, .07); }
+    .car .who { flex: 1; min-width: 0; }
+    .car .plate { font-weight: 700; font-size: 12.5px; letter-spacing: .02em; }
+    .car .model { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .car .kpi { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .car .cnt {
+        flex: none; min-width: 26px; text-align: center; font-weight: 700; font-size: 11.5px;
+        padding: 2px 6px; border-radius: 7px; background: rgba(148, 163, 184, .18);
+    }
+    .car .cnt.zero { color: var(--warn); background: rgba(251, 191, 36, .16); }
+    .car .flag { flex: none; color: var(--bad); font-size: 11px; }
+    .car .flag.f-red { color: #f87171; }
+    .car .flag.f-orange { color: #fbbf24; }
+    .car .flag.f-gray { color: #94a3b8; }
+    #shiftFoot { padding: 8px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+    #shiftFoot b { color: var(--accent); }
+
+    /* ---------- problem classes ---------- */
+    .prob-tp { color: #f87171; }      /* срыв трека */
+    .prob-bnso { color: #fbbf24; }    /* не работает БНСО */
+    .prob-offline { color: #94a3b8; } /* не на связи */
+
+    /* ---------- problems panel ---------- */
+    #problems { flex: 0 0 auto; max-height: 40vh; display: none; flex-direction: column; }
+    #problems.on { display: flex; }
+    #problems.collapsed .body { display: none; }
+    #problems .body { overflow: auto; padding: 4px 6px 6px; }
+    #problems h3 { cursor: pointer; }
+    .probRow {
+        display: flex; align-items: center; gap: 7px; padding: 4px 6px;
+        border-radius: 8px; font-size: 12px; cursor: pointer;
+    }
+    .probRow:hover { background: rgba(148, 163, 184, .13); }
+    .probRow input { flex: none; accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+    .probRow .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .probRow .msg { color: var(--muted); font-size: 10.5px; flex: none; max-width: 110px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #probFoot { padding: 7px 9px; border-top: 1px solid var(--line); display: flex; gap: 7px; }
+    #probFoot button {
+        flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 8px 6px; cursor: pointer;
+        background: rgba(251, 191, 36, .14); color: #fdebbf; font: 700 12px Inter, system-ui, sans-serif;
+    }
+    #probFoot button:hover { background: rgba(251, 191, 36, .26); }
+    #probFoot button:disabled { opacity: .45; cursor: default; }
+
+    /* ---------- fuel / diagnostics in card ---------- */
+    #cardStats { padding: 8px 12px; border-top: 1px solid var(--line); display: none; }
+    #cardStats.on { display: block; }
+    .statGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 6px; }
+    .statGrid div { background: rgba(148, 163, 184, .1); border-radius: 8px; padding: 5px 6px; text-align: center; }
+    .statGrid b { display: block; font-size: 12.5px; }
+    .statGrid span { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    #cardProb { font-size: 11.5px; line-height: 1.35; }
+    #cardProb b { font-size: 12px; }
+    #cardProb .estpBtn {
+        margin-top: 7px; width: 100%; border: 1px solid var(--warn); border-radius: 9px;
+        background: rgba(251, 191, 36, .14); color: #fdebbf; padding: 7px; cursor: pointer;
+        font: 700 12px Inter, system-ui, sans-serif;
+    }
+    #cardProb .estpBtn:hover { background: rgba(251, 191, 36, .28); }
+
+    /* ---------- ESTP dialog ---------- */
+    #estpModal {
+        position: fixed; inset: 0; z-index: 2000; display: none;
+        background: rgba(2, 6, 23, .6); backdrop-filter: blur(3px);
+        align-items: center; justify-content: center;
+    }
+    #estpModal.on { display: flex; }
+    #estpDialog {
+        width: min(860px, 92vw); max-height: 86vh; display: flex; flex-direction: column;
+        background: #0f172a; border: 1px solid var(--line); border-radius: 16px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, .6);
+    }
+    #estpDialog header {
+        padding: 13px 16px; border-bottom: 1px solid var(--line);
+        font-weight: 800; font-size: 14px; display: flex; align-items: center; gap: 8px;
+    }
+    #estpDialog header .x { margin-left: auto; background: none; border: 0; color: var(--muted);
+        font-size: 18px; cursor: pointer; }
+    #estpDialog header .x:hover { color: var(--text); }
+    #estpRows { overflow: auto; padding: 10px 14px; }
+    .estpRow {
+        display: grid; grid-template-columns: 120px 170px 1fr 1fr; gap: 8px; align-items: center;
+        padding: 8px 0; border-bottom: 1px dashed rgba(148, 163, 184, .15); font-size: 12px;
+    }
+    .estpRow:last-child { border-bottom: 0; }
+    .estpRow .plate { font-weight: 800; }
+    .estpRow .prob { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .estpRow select, .estpRow input {
+        width: 100%; background: rgba(148, 163, 184, .12); border: 1px solid var(--line);
+        border-radius: 8px; color: var(--text); padding: 7px 9px;
+        font: 500 12px Inter, system-ui, sans-serif; color-scheme: dark;
+    }
+    .estpRow select:focus, .estpRow input:focus { outline: 1px solid var(--accent); }
+    .estpRow .res { grid-column: 1 / -2; font-size: 11px; text-align: right; }
+    .estpRow .res.ok { color: var(--ok); }
+    .estpRow .res.bad { color: var(--bad); }
+    #estpDialog footer {
+        padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 9px; align-items: center;
+    }
+    #estpHint { color: var(--muted); font-size: 11.5px; flex: 1; }
+    #estpDialog footer button {
+        border-radius: 10px; padding: 9px 18px; cursor: pointer; border: 1px solid var(--line);
+        background: rgba(148, 163, 184, .14); color: var(--text); font: 600 12.5px Inter, system-ui, sans-serif;
+    }
+    #estpSend {
+        background: rgba(52, 211, 153, .18) !important; border-color: var(--ok) !important; color: #b8f5dd !important;
+    }
+    #estpSend:hover { background: rgba(52, 211, 153, .3) !important; }
+    #estpSend:disabled { opacity: .5; cursor: default; }
+
+    /* ---------- control panel ---------- */
+    #control { flex: 0 0 auto; max-height: 46vh; display: flex; flex-direction: column; }
+    #control .body { max-height: 220px; overflow: auto; padding: 4px 6px 8px; }
+    #control.collapsed .body { display: none; }
+    #control .metric { display: flex; gap: 6px; padding: 6px 6px 2px; }
+    #control .metric div { flex: 1; background: rgba(148, 163, 184, .1); border-radius: 9px; padding: 6px 8px; text-align: center; }
+    #control .metric b { display: block; font-size: 16px; }
+    #control .metric span { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .issue {
+        display: flex; justify-content: space-between; gap: 8px; padding: 5px 7px;
+        border-radius: 8px; cursor: pointer; font-size: 12px;
+    }
+    .issue:hover { background: rgba(148, 163, 184, .13); }
+    .issue .t { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .issue.bad .t { color: #fecaca; }
+    .sec { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); padding: 8px 7px 3px; }
+
+    /* ---------- route card ---------- */
+    #card { left: 12px; bottom: 12px; width: 372px; max-height: 64vh; display: none; flex-direction: column; }
+    #card.on { display: flex; }
+    #cardHead { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: move; }
+    #cardHead .dot { width: 13px; height: 13px; border-radius: 5px; flex: none; }
+    #cardTitle { font-weight: 800; font-size: 14px; letter-spacing: .02em; }
+    #cardSub { color: var(--muted); font-size: 11px; }
+    #cardHead .x { margin-left: auto; background: none; border: 0; color: var(--muted); font-size: 17px; cursor: pointer; }
+    #cardHead .x:hover { color: var(--text); }
+    #zoneList { list-style: none; margin: 0; padding: 6px; overflow: auto; }
+    #zoneList li {
+        display: flex; align-items: center; gap: 8px; padding: 6px 8px; margin-bottom: 3px;
+        background: rgba(148, 163, 184, .09); border: 1px solid transparent; border-radius: 9px;
+        cursor: grab; font-size: 12px;
+    }
+    #zoneList li:hover { border-color: rgba(148, 163, 184, .4); }
+    #zoneList li.drag { opacity: .35; }
+    #zoneList li.over { border-color: var(--accent); background: rgba(56, 189, 248, .12); }
+    #zoneList .seq {
+        flex: none; width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center;
+        font-weight: 800; font-size: 11px; color: #04121f;
+    }
+    #zoneList .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    #zoneList .kind { flex: none; font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    #zoneList .rm { flex: none; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 14px; }
+    #zoneList .rm:hover { color: var(--bad); }
+    #cardFoot { display: flex; gap: 7px; padding: 9px 11px; border-top: 1px solid var(--line); }
+    #cardFoot button {
+        flex: 1; border: 1px solid var(--line); border-radius: 9px; padding: 8px 6px; cursor: pointer;
+        background: rgba(148, 163, 184, .12); color: var(--text); font: 600 12px Inter, system-ui, sans-serif;
+    }
+    #cardFoot button:hover { background: rgba(148, 163, 184, .22); }
+    #cardFoot .send { background: rgba(52, 211, 153, .18); border-color: var(--ok); color: #b8f5dd; }
+    #cardFoot .send:hover { background: rgba(52, 211, 153, .3); }
+    #cardEmpty { padding: 14px; color: var(--muted); font-size: 12px; }
+
+    /* ---------- chips ---------- */
+    .zchip {
+        display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px;
+        border-radius: 999px; color: #fff; font: 700 10.5px Inter, system-ui, sans-serif;
+        white-space: nowrap; box-shadow: 0 3px 10px rgba(2, 6, 23, .45);
+        border: 1px solid rgba(255, 255, 255, .35); font-variant-numeric: tabular-nums;
+    }
+    .zchip i {
+        font-style: normal; width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center;
+        background: rgba(255, 255, 255, .26); font-size: 9.5px; font-weight: 800;
+    }
+    .zchip.mini { padding: 1px 6px; font-size: 10px; }
+    .leaflet-div-icon { background: none; border: none; }
+
+    /* ---------- misc ---------- */
+    #toast {
+        position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(16px);
+        z-index: 1200; background: var(--glass); border: 1px solid var(--line);
+        padding: 9px 15px; border-radius: 11px; opacity: 0; pointer-events: none;
+        transition: opacity .2s ease, transform .2s ease; font-size: 12.5px;
+        box-shadow: 0 10px 30px rgba(2, 6, 23, .4); max-width: 70vw;
+    }
+    #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .zoneTip.leaflet-tooltip {
+        background: var(--glass-2); color: var(--text); border: 1px solid var(--line);
+        border-radius: 9px; box-shadow: 0 8px 22px rgba(2, 6, 23, .35); font-size: 11.5px;
+    }
+    .zoneTip.leaflet-tooltip::before { display: none; }
+    .zoneTip .who { color: var(--accent); }
+    .zoneTip .none { color: var(--warn); }
+    #hint {
+        position: absolute; left: 12px; top: 98px; z-index: 999;
+        background: var(--glass); border: 1px solid var(--line); border-radius: 11px;
+        padding: 6px 13px; font-size: 11.5px; color: var(--muted); white-space: nowrap;
+        transition: opacity .45s ease;
+    }
+    #hint b { color: var(--text); }
+    #hint kbd {
+        display: inline-block; background: rgba(148, 163, 184, .18); border: 1px solid var(--line);
+        border-radius: 4px; padding: 0 5px; font: 500 11px Inter, system-ui, sans-serif;
+        color: var(--text);
+    }
+    #hint.hide { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="topbar" class="panel">
+    <input id="dayPick" type="date" class="num" title="Дата смены">
+    <div class="seg" id="modes">
+        <button data-mode="assign" class="on">Закрепление</button>
+        <button data-mode="zones">Зоны</button>
+        <button data-mode="coverage">Покрытие</button>
+    </div>
+    <button class="tgl go" id="btnLive" title="Обновить из ЕТС (реальные данные)">📡 ЕТС</button>
+    <button class="tgl" id="btnDemo" title="Загрузить демо-данные">🎭 Демо</button>
+    <button class="tgl" id="btnExport" title="Скачать маршруты в CSV">📥 CSV</button>
+    <button class="tgl" id="btnReport" title="Отчёт по машинам: статус, топливо, пробег">📊 Отчёт</button>
+    <button class="tgl" id="btnTrack" title="Фактический трек выбранной машины">Трек</button>
+    <button class="tgl on" id="btnChips" title="Подписи на карте">Подписи</button>
+</div>
+
+<div id="hint">Клик по зоне — <b>назначить / снять</b> для выбранной машины · <kbd>/</kbd> — поиск · Esc — снять выбор</div>
+
+<div id="rail">
+    <div id="shift" class="panel">
+        <h3>Смена · <span id="carCount" class="num">0</span> ТС · <span id="etsSource">—</span></h3>
+        <div id="carSearch">
+            <input id="carFilter" placeholder="Поиск: номер, модель, статус…">
+            <div class="seg" id="sorts">
+                <button data-sort="zones" class="on" title="Больше зон">Зон</button>
+                <button data-sort="problem" title="Сначала с проблемами">Сбой</button>
+                <button data-sort="plate" title="По номеру">А–Я</button>
+            </div>
+        </div>
+        <div id="carList"></div>
+        <div id="shiftGhost" style="display:none;border-top:1px solid var(--line);padding:6px 8px">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding-bottom:4px">Вне смены · <span id="ghostCount" class="num">0</span></div>
+            <div id="ghostList"></div>
+        </div>
+        <div id="shiftFoot">Выбрано: <b id="activeName">никто</b></div>
+    </div>
+
+    <div id="problems" class="panel">
+        <h3 id="probHead">Проблемы · <span id="probCount" class="num">0</span></h3>
+        <div class="body" id="probBody"></div>
+        <div id="probFoot">
+            <button id="btnEstp" title="Создать заявки в ЕСТП по отмеченным машинам">Создать заявки в ЕСТП</button>
+        </div>
+    </div>
+
+    <div id="control" class="panel">
+        <h3 id="ctrlHead">Контроль смены · <span id="ctrlDay" class="num">—</span></h3>
+        <div class="metric" id="ctrlMetric"></div>
+        <div class="body" id="ctrlBody"></div>
+    </div>
+</div>
+
+<div id="card" class="panel">
+    <div id="cardHead">
+        <span class="dot" id="cardDot"></span>
+        <div>
+            <div id="cardTitle">—</div>
+            <div id="cardSub">—</div>
+        </div>
+        <button class="x" id="cardClose" title="Закрыть (Esc)">✕</button>
+    </div>
+    <ul id="zoneList"></ul>
+    <div id="cardEmpty">Маршрут пуст — кликайте по зонам на карте.</div>
+    <div id="cardStats">
+        <div class="statGrid" id="fuelGrid"></div>
+        <div id="cardProb"></div>
+    </div>
+    <div id="cardFoot">
+        <button id="btnFit">Вписать</button>
+        <button id="btnClear">Очистить</button>
+        <button class="send" id="btnSend">Отправить в ЕТС</button>
+    </div>
+</div>
+
+<div id="estpModal">
+    <div id="estpDialog">
+        <header>🛠 Заявки в ЕСТП <span id="estpCount" class="num"></span>
+            <button class="x" id="estpClose">✕</button></header>
+        <div id="estpRows"></div>
+        <footer>
+            <span id="estpHint">Классификация подставлена по типу проблемы — можно поменять.</span>
+            <button id="estpCancel">Отмена</button>
+            <button id="estpSend">ОТПРАВИТЬ В ЕСТП</button>
+        </footer>
+    </div>
+</div>
+
+<div id="sync"><span class="spin"></span><span id="syncText">—</span></div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+   API layer. The page holds no business state of its own: everything is
+   pulled from the local Python server, so this exact file also runs in a
+   plain browser pointed at 127.0.0.1:8001.
+   ===================================================================== */
+const api = {
+    async get(path, params) {
+        const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+        const r = await fetch(path + qs, { cache: "no-store" });
+        return r.json();
+    },
+    async post(path, body) {
+        const r = await fetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        return r.json();
+    },
+    state: () => api.get("/api/state"),
+    track: (plate) => api.get("/api/track", { plate }),
+    lastHere: (zoneId) => api.get("/api/last_here", { zone_id: zoneId }),
+    toggle: (zone_id, plate) => api.post("/api/zone/toggle", { action: "zone/toggle", zone_id, plate }),
+    clear: (plate) => api.post("/api/route/clear", { action: "route/clear", plate }),
+    reorder: (zone_ids, plate) => api.post("/api/route/reorder", { action: "route/reorder", zone_ids, plate }),
+    send: (plate) => api.post("/api/route/send", { action: "route/send", plate }),
+    setActive: (plate) => api.post("/api/active", { action: "car/active", plate }),
+    collect: (kind, day) => api.post("/api/collect", { action: "collect", kind, day }),
+    estpSubmit: (tickets) => api.post("/api/estp/submit", { action: "estp/submit", tickets }),
+    log: (msg, level) => api.post("/api/log", { action: "log", msg, level: level || "js" }),
+};
+
+/* =====================================================================
+   Local state
+   ===================================================================== */
+let zones = [];              // [{id,name,kind,centroid,c,thin}]
+let zoneIdx = {};            // id -> zone
+let poly = {};               // id -> L.Polygon
+let state = null;            // /api/state
+let holdersIdx = {};         // zone_id -> [{plate,seq,status}]
+let mode = "assign";
+let showChips = true;
+let showTrack = false;
+let trackPlate = null;
+let dragZone = null;
+let busy = false;
+const CHIPS_MIN_ZOOM = 13;
+
+const KIND_STYLE = {
+    odh: { color: "#1d4ed8", fill: "#3b82f6" },
+    mun: { color: "#047857", fill: "#10b981" },
+};
+const NEUTRAL = { color: "#64748b", fill: "#94a3b8" };
+
+/* =====================================================================
+   Problem classes — same buckets the ETS analyzer produces
+   ===================================================================== */
+const PROB_LABEL = { tp: "Срыв трека", bnso: "Не работает БНСО", offline: "Не на связи" };
+const PROB_FLAG = { tp: "f-red", bnso: "f-orange", offline: "f-gray" };
+
+function probClass(p) {
+    if (!p || p === "Норма") return null;
+    if (p.includes("Некорректное местоположение") || p.includes("Некорректный трек") || p.includes("срыв")) return "tp";
+    if (p.includes("БНСО")) return "bnso";
+    if (p.includes("не на связи")) return "offline";
+    return "tp";
+}
+
+function problemCars() {
+    return (state.cars || []).filter((c) => probClass(c.problem));
+}
+
+/* SLA list and auto-mapping, same as the desktop version */
+const SLA_OPTIONS = [
+    "Удаленное изменение настроек БНСО",
+    "Проведение работ по восстановлению неработающего БНСО",
+    "Проведение замены/ремонта датчиков учета топлива",
+    "Внесение изменений в информацию по ТС в АСУ ОДС ДЖКХиБ",
+    "Дистанционная поддержка",
+    "Нет данных по ТС в системе предприятия",
+    "Нет данных по ТС в АСУ ОДС",
+    "Некорректный трек ТС",
+    "Другое",
+    "Ввод в эксплуатацию",
+    "Претензия",
+];
+
+function autoSla(problem) {
+    const p = problem || "";
+    if (p.includes("Некорректное местоположение") || p.includes("Некорректный трек"))
+        return { sla: "Некорректный трек ТС", comment: "Некорректное местоположение ТС" };
+    if (p.includes("БНСО"))
+        return { sla: "Проведение работ по восстановлению неработающего БНСО", comment: "не отображается трек" };
+    if (p.includes("не на связи"))
+        return { sla: "Проведение работ по восстановлению неработающего БНСО", comment: "машина не выходит на связь" };
+    return { sla: "Другое", comment: "" };
+}
+
+/* =====================================================================
+   Map
+   ===================================================================== */
+const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([55.655, 37.485], 13);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+
+// Light basemap with CSS desaturation: no API key, zones stay readable.
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 20,
+    attribution: "&copy; OSM, &copy; CARTO",
+    className: "tiles-soft",
+}).addTo(map);
+
+const zoneLayer = L.layerGroup().addTo(map);
+const chipLayer = L.layerGroup().addTo(map);
+const trackLayer = L.layerGroup().addTo(map);
+
+/* =====================================================================
+   Zones: pre-projected, so this is just polygon creation
+   ===================================================================== */
+async function loadZones() {
+    const data = await api.get("/data/zones.json");
+    zones = data.zones;
+    zones.forEach((z) => zoneIdx[z.id] = z);
+    zones.forEach((z) => {
+        const base = KIND_STYLE[z.kind] || NEUTRAL;
+        const polygon = L.polygon(z.c, {
+            weight: 1.6,
+            opacity: 0.85,
+            color: base.color,
+            fillColor: base.fill,
+            fillOpacity: 0.18,
+        });
+        polygon.bindTooltip(() => tipHtml(z), { sticky: true, className: "zoneTip", direction: "top" });
+        polygon.on("click", (e) => {
+            L.DomEvent.stopPropagation(e);
+            onZoneClick(z);
+        });
+        polygon.addTo(zoneLayer);
+        poly[z.id] = polygon;
+    });
+    api.log("map: zones rendered " + zones.length, "map");
+}
+
+function tipHtml(z) {
+    const holders = holdersOf(z.id);
+    let who;
+    if (!holders.length) who = '<span class="none">не закреплена</span>';
+    else who = '<span class="who">' + holders.map((h) => esc(h.plate) + " · №" + h.seq).join(", ") + "</span>";
+    const kind = z.kind === "odh" ? "ОДХ" : "двор";
+    const area = z.area_m2 > 200 ? " · " + Math.round(z.area_m2 / 100) / 100 + " га" : "";
+    return "<b>" + esc(z.name || "(без названия)") + "</b><br>" + kind + area + "<br>" + who;
+}
+
+function holdersOf(zoneId) { return holdersIdx[zoneId] || []; }
+
+function routeOf(plate) {
+    if (!state || !plate) return [];
+    return (state.routes[plate] || []).slice().sort((a, b) => a.seq - b.seq);
+}
+
+function buildHolders() {
+    holdersIdx = {};
+    Object.entries(state.routes || {}).forEach(([plate, rows]) => {
+        rows.forEach((r) => {
+            (holdersIdx[r.zone_id] = holdersIdx[r.zone_id] || []).push({ plate, seq: r.seq, status: r.status });
+        });
+    });
+    Object.values(holdersIdx).forEach((a) => a.sort((x, y) => x.seq - y.seq));
+}
+
+/* =====================================================================
+   Paint. In the assignment view the color encodes the vehicle.
+   ===================================================================== */
+function paint() {
+    buildHolders();
+    const active = state.active;
+    const colors = state.colors || {};
+
+    zones.forEach((z) => {
+        const polygon = poly[z.id];
+        if (!polygon) return;
+        const holders = holdersOf(z.id);
+
+        if (mode === "zones") {
+            const base = KIND_STYLE[z.kind] || NEUTRAL;
+            polygon.setStyle({
+                color: base.color, fillColor: base.fill, weight: 1.6, opacity: 0.6,
+                fillOpacity: holders.length ? 0.30 : 0.12,
+            });
+            return;
+        }
+
+        if (mode === "coverage") {
+            // Only district yards are scored; city-wide ODH stays neutral.
+            if (z.kind !== "mun") {
+                polygon.setStyle({ color: NEUTRAL.color, fillColor: NEUTRAL.fill, weight: 0.8, opacity: 0.25, fillOpacity: 0.03 });
+            } else if (!holders.length) {
+                polygon.setStyle({ color: "#b91c1c", fillColor: "#ef4444", weight: 1.4, opacity: 0.9, fillOpacity: 0.16 });
+            } else if (holders.length > 1) {
+                polygon.setStyle({ color: "#f59e0b", fillColor: "#fbbf24", weight: 3, opacity: 1, fillOpacity: 0.40 });
+            } else {
+                polygon.setStyle({ color: "#475569", fillColor: "#64748b", weight: 1, opacity: 0.5, fillOpacity: 0.05 });
+            }
+            return;
+        }
+
+        // assign view
+        if (!holders.length) {
+            polygon.setStyle({ color: NEUTRAL.color, fillColor: NEUTRAL.fill, weight: 1, opacity: 0.35, fillOpacity: 0.04 });
+            return;
+        }
+        const plate = holders[0].plate;
+        const col = colors[plate] || NEUTRAL.color;
+        const conflict = holders.length > 1;
+        const dim = active && plate !== active;
+        polygon.setStyle({
+            color: conflict ? "#f59e0b" : col,
+            fillColor: conflict ? "#fbbf24" : col,
+            weight: active === plate ? 3 : 1.6,
+            opacity: dim ? 0.18 : 0.95,
+            fillOpacity: dim ? 0.05 : (active === plate ? 0.42 : 0.24),
+        });
+    });
+
+    paintChips();
+    renderCarList();
+    renderGhostList();
+    renderCard();
+    renderControl();
+    renderProblems();
+    renderEstpProgress();
+    document.getElementById("activeName").textContent = state.active || "никто";
+    const pick = document.getElementById("dayPick");
+    if (pick && pick.value !== state.day) pick.value = state.day;
+    const ets = state.ets || {};
+    document.getElementById("etsSource").textContent = ets.source || "—";
+    updateSyncBar(state);
+}
+
+function paintChips() {
+    chipLayer.clearLayers();
+    if (!showChips || mode === "zones" || map.getZoom() < CHIPS_MIN_ZOOM) return;
+    const active = state.active;
+    const colors = state.colors || {};
+
+    Object.entries(state.routes || {}).forEach(([plate, rows]) => {
+        if (active && plate !== active) return;
+        const col = colors[plate] || NEUTRAL.color;
+        rows.forEach((r) => {
+            const z = zoneIdx[r.zone_id];
+            if (!z || !z.centroid) return;
+            const html = active
+                ? '<span class="zchip" style="background:' + col + '"><i>' + r.seq + "</i>" + esc(plate) + "</span>"
+                : '<span class="zchip mini" style="background:' + col + '">' + r.seq + "</span>";
+            L.marker(z.centroid, {
+                icon: L.divIcon({ className: "", html }),
+                interactive: false, keyboard: false,
+            }).addTo(chipLayer);
+        });
+    });
+}
+
+/* =====================================================================
+   Zone click: assign / unassign, or inspect when no car is selected
+   ===================================================================== */
+async function onZoneClick(z) {
+    if (mode !== "assign") return void focusInfo(z);
+    if (!state.active) {
+        focusInfo(z);
+        toast("Выберите машину справа — затем кликайте по зонам");
+        return;
+    }
+    if (busy) return;
+    busy = true;
+    try {
+        const res = await api.toggle(z.id, state.active);
+        if (!res.ok) return void toast(errText(res));
+        toast(res.assigned
+            ? state.active + " → «" + short(z.name) + "», №" + res.row.seq
+            : "Снято: «" + short(z.name) + "»");
+        hideHint();
+        await refresh();
+    } catch (e) {
+        toast("Сбой сервера: " + e);
+    } finally {
+        busy = false;
+    }
+}
+
+async function focusInfo(z) {
+    const holders = holdersOf(z.id);
+    if (holders.length) {
+        toast("«" + short(z.name) + "» закреплена: " + holders.map((h) => h.plate + " (№" + h.seq + ")").join(", "));
+        return;
+    }
+    try {
+        const last = await api.lastHere(z.id);
+        if (last.ok && last.last) {
+            toast("Свободна. " + fmtDay(last.last.day) + " здесь работал " + last.last.plate);
+        } else {
+            toast("Свободна, ранее не закреплялась");
+        }
+    } catch (e) { /* ignore */ }
+}
+
+let lastSyncToast = null;
+
+/* The strip lives in the topbar row: it starts right after the last button and
+   never overlaps the right rail, so no manual pixel math. On narrow windows
+   there is no room to the right, so it drops below the topbar instead. */
+function positionSync() {
+    const bar = document.getElementById("sync");
+    const tb = document.getElementById("topbar").getBoundingClientRect();
+    const rail = document.getElementById("rail").getBoundingClientRect();
+    const room = rail.left - tb.right - 20;
+    if (room >= 220) {
+        bar.style.top = Math.round(tb.top) + "px";
+        bar.style.left = Math.round(tb.right + 10) + "px";
+        bar.style.maxWidth = room + "px";
+    } else {
+        bar.style.top = Math.round(tb.bottom + 10) + "px";
+        bar.style.left = Math.round(tb.left) + "px";
+        bar.style.maxWidth = Math.max(160, Math.round(rail.left - tb.left - 16)) + "px";
+    }
+}
+window.addEventListener("resize", positionSync);
+
+function updateSyncBar(st) {
+    const bar = document.getElementById("sync");
+    const txt = document.getElementById("syncText");
+    const e = st.estp || {};
+    const t = st.ets || {};
+
+    // ESTP is more urgent than an ETS refresh; done/error only shows when it is
+    // newer than the ETS event so the strip never lags on a stale message.
+    let msg = null, err = false;
+    if (e.status === "queued" || e.status === "running") {
+        msg = "ЕСТП: " + (e.done || 0) + "/" + (e.total || 0) +
+              (e.current ? " · " + e.current : " · очередь");
+    } else if ((e.status === "done" || e.status === "error") &&
+               String(e.updated_at || "") >= String(t.updated_at || "")) {
+        if (e.status === "done") {
+            const ok = (e.results || []).filter((r) => r.ok).length;
+            msg = "ЕСТП: создано " + ok + " из " + (e.results || []).length + " заявок";
+        } else {
+            msg = "ЕСТП: " + (e.error || "ошибка");
+            err = true;
+        }
+    } else if (t.status === "queued" || t.status === "running") {
+        msg = "Сбор из ЕТС… " + (t.progress || "");
+    } else if (t.status === "done") {
+        msg = "Готово: " + (t.cars || 0) + " ТС · " + fmtDay(t.day);
+    } else if (t.status === "error") {
+        msg = "Ошибка: " + (t.error || "неизвестно");
+        err = true;
+    } else if (t.status === "idle") {
+        msg = "Данные не загружены — нажмите «ЕТС»";
+    }
+
+    if (!msg) { bar.classList.remove("on", "err"); return; }
+    bar.classList.add("on");
+    bar.classList.toggle("err", err);
+    positionSync();
+    txt.textContent = msg;
+
+    // One toast per finished ESTP batch, so the user notices even with the modal open.
+    const key = e.status + (e.updated_at || "");
+    if ((e.status === "done" || e.status === "error") && key !== lastSyncToast) {
+        lastSyncToast = key;
+        toast(msg);
+    }
+    // Clear problem checkboxes once the batch they belonged to is finished.
+    if (e.status === "done" && probSel.size) probSel.clear();
+}
+
+/* =====================================================================
+    Shift panel (also the legend)
+    ===================================================================== */
+let carSort = "zones";
+let carSearch = "";
+
+function renderCarList() {
+    const box = document.getElementById("carList");
+    let cars = (state.cars || []).slice();
+    // search
+    if (carSearch) {
+        cars = cars.filter(c =>
+            (c.plate || "").toLowerCase().includes(carSearch) ||
+            (c.model || "").toLowerCase().includes(carSearch) ||
+            (c.problem || "").toLowerCase().includes(carSearch)
+        );
+    }
+    // sort
+    if (carSort === "zones") {
+        cars.sort((a, b) => (b.zones || 0) - (a.zones || 0) || a.plate.localeCompare(b.plate));
+    } else if (carSort === "problem") {
+        const pb = p => p === "Норма" ? 0 : 1;
+        cars.sort((a, b) => pb(a.problem) - pb(b.problem) || (b.zones || 0) - (a.zones || 0));
+    } else {
+        cars.sort((a, b) => a.plate.localeCompare(b.plate));
+    }
+    document.getElementById("carCount").textContent = (state.cars || []).length;
+    box.innerHTML = "";
+    cars.forEach((c) => {
+        const row = document.createElement("div");
+        row.className = "car" + (state.active === c.plate ? " on" : "");
+        const kpi = [];
+        if (c.distance) kpi.push(c.distance + " км");
+        if (c.percent !== undefined && c.percent !== null) kpi.push(c.percent + "%");
+        const kpiHtml = kpi.length ? '<div class="kpi">' + kpi.join(" · ") + "</div>" : "";
+        const pc = probClass(c.problem);
+        const flag = pc
+            ? '<span class="flag ' + PROB_FLAG[pc] + '" title="' + esc(c.problem) +
+              (c.detail ? " — " + esc(c.detail) : "") + '">●</span>'
+            : "";
+        row.innerHTML =
+            '<span class="dot" style="background:' + (c.color || NEUTRAL.color) + '"></span>' +
+            '<div class="who"><div class="plate">' + esc(c.plate) + "</div>" +
+            '<div class="model">' + esc(c.model || "") + "</div>" +
+            kpiHtml + '</div>' +
+            flag +
+            '<span class="cnt num' + (c.zones ? "" : " zero") + '">' + (c.zones || 0) + "</span>";
+        row.onclick = () => selectCar(c.plate);
+        box.appendChild(row);
+    });
+}
+
+// Assignments that belong to cars not on the road today: still real plans, but
+// listed apart so nobody mistakes them for the current shift.
+function renderGhostList() {
+    const box = document.getElementById("ghostList");
+    const wrap = document.getElementById("shiftGhost");
+    const ghosts = (state.ghosts || []).slice()
+        .sort((a, b) => b.zones - a.zones || a.plate.localeCompare(b.plate));
+    if (!ghosts.length) { wrap.style.display = "none"; box.innerHTML = ""; return; }
+    wrap.style.display = "";
+    document.getElementById("ghostCount").textContent = ghosts.length;
+    box.innerHTML = "";
+    ghosts.forEach((g) => {
+        const row = document.createElement("div");
+        row.className = "car" + (state.active === g.plate ? " on" : "");
+        row.style.opacity = ".72";
+        row.innerHTML =
+            '<span class="dot" style="background:' + g.color + '"></span>' +
+            '<div class="who"><div class="plate">' + esc(g.plate) + "</div>" +
+            '<div class="model">' + esc(g.model || "нет данных") + "</div></div>" +
+            '<span class="cnt num">' + g.zones + "</span>";
+        row.onclick = () => selectCar(g.plate);
+        box.appendChild(row);
+    });
+}
+
+async function selectCar(plate) {
+    const next = state.active === plate ? null : plate;
+    await api.setActive(next);
+    state.active = next;
+    paint();
+    if (next) {
+        fitRoute(next);
+        if (showTrack) await drawTrack(next);
+    } else {
+        trackLayer.clearLayers();
+        trackPlate = null;
+    }
+    await refresh();
+}
+
+/* =====================================================================
+   Route card with drag-and-drop order
+   ===================================================================== */
+function renderCard() {
+    const card = document.getElementById("card");
+    const plate = state.active;
+    if (!plate) { card.classList.remove("on"); return; }
+
+    const rows = routeOf(plate);
+    const colors = state.colors || {};
+    const car = (state.cars || []).find((c) => c.plate === plate) || {};
+    card.classList.add("on");
+    document.getElementById("cardDot").style.background = colors[plate] || NEUTRAL.color;
+    document.getElementById("cardTitle").textContent = plate;
+    const status = rows.length ? (rows[0].status === "sent" ? "отправлено" : "черновик") : "маршрут пуст";
+    document.getElementById("cardSub").textContent =
+        (car.model || "—") + " · " + (car.cat_b || "—") + " · " + status;
+
+    renderCardStats(car);
+
+    const ul = document.getElementById("zoneList");
+    document.getElementById("cardEmpty").style.display = rows.length ? "none" : "block";
+    ul.innerHTML = "";
+
+    rows.forEach((r) => {
+        const z = zoneIdx[r.zone_id] || { name: r.name || r.zone_id, kind: r.kind };
+        const li = document.createElement("li");
+        li.draggable = true;
+        li.dataset.zone = r.zone_id;
+        li.innerHTML =
+            '<span class="seq" style="background:' + (colors[plate] || NEUTRAL.color) + '">' + r.seq + "</span>" +
+            '<span class="nm" title="' + esc(z.name) + '">' + esc(z.name) + "</span>" +
+            '<span class="kind">' + (z.kind === "odh" ? "ОДХ" : "двор") + "</span>" +
+            '<button class="rm" title="Снять зону">✕</button>';
+        li.querySelector(".nm").onclick = () => focusZone(r.zone_id);
+        li.querySelector(".rm").onclick = async () => {
+            await api.toggle(r.zone_id, plate);
+            await refresh();
+        };
+        li.addEventListener("dragstart", () => { dragZone = r.zone_id; li.classList.add("drag"); });
+        li.addEventListener("dragend", () => { li.classList.remove("drag"); dragZone = null; });
+        li.addEventListener("dragover", (e) => { e.preventDefault(); li.classList.add("over"); });
+        li.addEventListener("dragleave", () => li.classList.remove("over"));
+        li.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            li.classList.remove("over");
+            if (!dragZone || dragZone === r.zone_id) return;
+            const ids = routeOf(plate).map((x) => x.zone_id);
+            const from = ids.indexOf(dragZone);
+            const to = ids.indexOf(r.zone_id);
+            if (from < 0 || to < 0) return;
+            ids.splice(to, 0, ids.splice(from, 1)[0]);
+            await api.reorder(ids, plate);
+            await refresh();
+        });
+        ul.appendChild(li);
+    });
+}
+
+function focusZone(zoneId) {
+    const p = poly[zoneId];
+    if (!p) return;
+    map.fitBounds(p.getBounds(), { maxZoom: 17 });
+    p.openTooltip();
+}
+
+/* Fuel + diagnostics block inside the route card */
+function fmtFuel(v) {
+    if (v === null || v === undefined || v === "" || v === "-") return "—";
+    return v;
+}
+
+function renderCardStats(car) {
+    const box = document.getElementById("cardStats");
+    const hasFuel = car.fuel_start !== undefined || car.fuel_fact !== undefined;
+    const pc = probClass(car.problem);
+    if (!hasFuel && !car.distance && !pc) { box.classList.remove("on"); return; }
+    box.classList.add("on");
+
+    const cells = [];
+    if (hasFuel) {
+        cells.push("<div><b>" + fmtFuel(car.fuel_start) + "</b><span>выезд, л</span></div>");
+        cells.push("<div><b>" + fmtFuel(car.fuel_refuel) + "</b><span>заправка</span></div>");
+        cells.push("<div><b>" + fmtFuel(car.fuel_fact) + "</b><span>факт, л</span></div>");
+    }
+    if (car.distance) cells.push("<div><b>" + car.distance + "</b><span>пробег, км</span></div>");
+    document.getElementById("fuelGrid").innerHTML = cells.join("");
+
+    const prob = document.getElementById("cardProb");
+    if (pc) {
+        prob.innerHTML =
+            '<b class="prob-' + pc + '">' + esc(car.problem) + "</b>" +
+            (car.detail ? '<div style="color:var(--muted)">' + esc(car.detail) + "</div>" : "") +
+            (car.valid_points !== undefined
+                ? '<div style="color:var(--muted)">точек: ' + (car.valid_points || 0) +
+                  "/" + (car.track_points || 0) +
+                  (car.teleports ? ", телепортов: " + car.teleports : "") + "</div>"
+                : "") +
+            '<button class="estpBtn" id="btnEstpOne">🛠 Заявка в ЕСТП по этой машине</button>';
+        prob.querySelector("#btnEstpOne").onclick = () => openEstpDialog([car.plate]);
+    } else if (car.problem === "Норма") {
+        prob.innerHTML = '<b style="color:var(--ok)">Норма</b>' +
+            (car.detail ? '<div style="color:var(--muted)">' + esc(car.detail) + "</div>" : "");
+    } else {
+        prob.innerHTML = "";
+    }
+}
+
+/* =====================================================================
+    Problems panel: grouped defects + ESTP ticket selection
+    ===================================================================== */
+const probSel = new Set();
+
+function updateProbBtn() {
+    const btn = document.getElementById("btnEstp");
+    const running = state && state.estp &&
+        (state.estp.status === "running" || state.estp.status === "queued");
+    btn.textContent = "Создать заявки в ЕСТП" + (probSel.size ? " · " + probSel.size : "");
+    btn.disabled = !probSel.size || running;
+}
+
+function renderProblems() {
+    const panel = document.getElementById("problems");
+    const list = problemCars();
+    document.getElementById("probCount").textContent = list.length;
+    if (!list.length) { panel.classList.remove("on"); return; }
+    panel.classList.add("on");
+
+    const plates = new Set(list.map((c) => c.plate));
+    [...probSel].forEach((p) => { if (!plates.has(p)) probSel.delete(p); });
+
+    const groups = {};
+    list.forEach((c) => {
+        const k = probClass(c.problem);
+        (groups[k] = groups[k] || []).push(c);
+    });
+
+    let html = "";
+    Object.entries(groups).forEach(([k, cars]) => {
+        html += '<div class="sec">' + PROB_LABEL[k] + " · " + cars.length + "</div>";
+        cars.forEach((c) => {
+            html += '<div class="probRow" data-plate="' + esc(c.plate) + '">' +
+                '<input type="checkbox" data-p="' + esc(c.plate) + '"' +
+                (probSel.has(c.plate) ? " checked" : "") + ">" +
+                '<span class="t">' + esc(c.plate) + "</span>" +
+                '<span class="msg" title="' + esc(c.detail || c.problem) + '">' +
+                esc(short(c.detail || c.problem, 30)) + "</span></div>";
+        });
+    });
+    const body = document.getElementById("probBody");
+    body.innerHTML = html;
+    body.querySelectorAll("input[type=checkbox]").forEach((ch) => {
+        ch.onclick = (e) => { e.stopPropagation(); };
+        ch.onchange = () => {
+            if (ch.checked) probSel.add(ch.dataset.p); else probSel.delete(ch.dataset.p);
+            updateProbBtn();
+        };
+    });
+    body.querySelectorAll(".probRow").forEach((row) => {
+        row.onclick = () => selectCar(row.dataset.plate);
+    });
+    updateProbBtn();
+}
+
+function fitRoute(plate) {
+    const rows = routeOf(plate);
+    if (!rows.length) return;
+    const b = L.latLngBounds([]);
+    rows.forEach((r) => {
+        const p = poly[r.zone_id];
+        if (p) b.extend(p.getBounds());
+    });
+    if (b.isValid()) map.flyToBounds(b, { padding: [70, 70], maxZoom: 16, duration: 0.5 });
+}
+
+/* =====================================================================
+   Control panel
+   ===================================================================== */
+function renderControl() {
+    const c = state.control || {};
+    // Coverage is measured on district yards; ODH (MKAD interchanges) live all
+    // over the city and would make the ratio meaningless.
+    const munPct = c.mun_total ? Math.round((c.mun_covered / c.mun_total) * 100) : 0;
+    const uncoveredYards = (c.uncovered || []).filter((u) => u.kind === "mun");
+
+    // Metrics live outside the scroll area: they must never scroll away.
+    document.getElementById("ctrlMetric").innerHTML =
+        "<div><b class='num' style='color:var(--ok)'>" + munPct + "%</b><span>дворов</span></div>" +
+        "<div><b class='num'>" + (c.mun_covered || 0) + "/" + (c.mun_total || 0) + "</b><span>закреп.</span></div>" +
+        "<div><b class='num' style='color:" + ((c.conflicts || []).length ? "var(--warn)" : "var(--muted)") + "'>" +
+        (c.conflicts || []).length + "</b><span>конфликт.</span></div>";
+    document.getElementById("ctrlDay").textContent = fmtDay(state.day);
+
+    let html = "";
+    if ((c.conflicts || []).length) {
+        html += '<div class="sec">Зона на двух ТС</div>';
+        c.conflicts.forEach((k) => {
+            const z = zoneIdx[k.zone_id] || {};
+            html += '<div class="issue bad" data-z="' + k.zone_id + '"><span class="t">' +
+                esc(short(z.name || k.zone_id)) + '</span><span class="num">' + k.plates.length + " ТС</span></div>";
+        });
+    }
+    if ((c.empty_cars || []).length) {
+        html += '<div class="sec">Без маршрута</div>';
+        c.empty_cars.forEach((p) => {
+            html += '<div class="issue" data-plate="' + esc(p) + '"><span class="t">' + esc(p) +
+                "</span><span class='num' style='color:var(--warn)'>0 зон</span></div>";
+        });
+    }
+    if (uncoveredYards.length) {
+        html += '<div class="sec">Непокрытые дворы · ' + uncoveredYards.length + "</div>";
+        uncoveredYards.slice(0, 8).forEach((u) => {
+            html += '<div class="issue" data-z="' + u.id + '"><span class="t">' + esc(short(u.name)) + "</span></div>";
+        });
+    }
+    const body = document.getElementById("ctrlBody");
+    body.innerHTML = html;
+    body.querySelectorAll("[data-z]").forEach((el) => { el.onclick = () => focusZone(el.dataset.z); });
+    body.querySelectorAll("[data-plate]").forEach((el) => { el.onclick = () => selectCar(el.dataset.plate); });
+}
+
+/* =====================================================================
+   Track (fact) over the route (plan)
+   ===================================================================== */
+async function drawTrack(plate) {
+    trackLayer.clearLayers();
+    if (!plate) return;
+    const res = await api.track(plate);
+    if (!res.ok || !res.coords || !res.coords.length) { toast("Трека за эту дату нет"); return; }
+    const col = (state.colors || {})[plate] || "#ef4444";
+    L.polyline(res.coords, { color: col, weight: 4, opacity: 0.9 }).addTo(trackLayer);
+    L.circleMarker(res.coords[0], { radius: 5, color: "#0b1220", fillColor: "#ffffff", fillOpacity: 1 })
+        .addTo(trackLayer).bindTooltip("старт", { className: "zoneTip" });
+    L.circleMarker(res.coords[res.coords.length - 1], { radius: 5, color: "#0b1220", fillColor: col, fillOpacity: 1 })
+        .addTo(trackLayer).bindTooltip("последняя точка", { className: "zoneTip" });
+    trackPlate = plate;
+}
+
+/* =====================================================================
+    UI wiring
+    ===================================================================== */
+
+// ETS collection
+document.getElementById("btnLive").onclick = async () => {
+    const day = document.getElementById("dayPick").value || state?.day;
+    const res = await api.collect("live", day);
+    if (!res.ok) return void toast(errText(res));
+    toast("Сбор из ЕТС в очереди…");
+};
+document.getElementById("btnDemo").onclick = async () => {
+    const day = document.getElementById("dayPick").value || state?.day;
+    const res = await api.collect("demo", day);
+    if (!res.ok) return void toast(errText(res));
+    toast("Демо-данные загружаются…");
+};
+document.getElementById("btnExport").onclick = () => {
+    window.location.href = "/api/export.csv?day=" + encodeURIComponent(state.day);
+};
+document.getElementById("btnReport").onclick = () => {
+    window.location.href = "/api/export_cars.csv";
+};
+document.getElementById("carFilter").addEventListener("input", (e) => {
+    carSearch = e.target.value.toLowerCase().trim();
+    renderCarList();
+});
+document.getElementById("sorts").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    carSort = b.dataset.sort;
+    Array.from(e.currentTarget.children).forEach(n => n.classList.toggle("on", n === b));
+    renderCarList();
+});
+
+document.getElementById("modes").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    mode = b.dataset.mode;
+    Array.from(e.currentTarget.children).forEach((n) => n.classList.toggle("on", n === b));
+    if (mode === "coverage") document.getElementById("control").classList.remove("collapsed");
+    paint();
+});
+
+document.getElementById("btnChips").onclick = (e) => {
+    showChips = !showChips;
+    e.currentTarget.classList.toggle("on", showChips);
+    paintChips();
+};
+
+document.getElementById("dayPick").addEventListener("change", async (e) => {
+    const d = e.target.value;
+    if (!d) return;
+    await api.post("/api/day", { action: "day", day: d });
+    state.day = d;
+    paint();
+});
+
+document.getElementById("btnTrack").onclick = async (e) => {
+    showTrack = !showTrack;
+    e.currentTarget.classList.toggle("on", showTrack);
+    if (showTrack && state.active) await drawTrack(state.active);
+    if (!showTrack) { trackLayer.clearLayers(); trackPlate = null; }
+};
+
+document.getElementById("cardClose").onclick = () => { if (state.active) selectCar(state.active); };
+document.getElementById("btnFit").onclick = () => fitRoute(state.active);
+document.getElementById("btnClear").onclick = async () => {
+    if (!state.active) return;
+    if (!confirm("Очистить маршрут " + state.active + " на " + fmtDay(state.day) + "?")) return;
+    await api.clear(state.active);
+    await refresh();
+};
+document.getElementById("btnSend").onclick = async () => {
+    if (!state.active) return;
+    const rows = routeOf(state.active);
+    if (!rows.length) { toast("Маршрут пуст"); return; }
+    const res = await api.send(state.active);
+    if (res.ok) {
+        toast("Отправлено в ЕТС: " + res.zone_ids.length + " зон" + (res.stub ? " (заглушка)" : ""));
+        api.log("ETS send stub " + JSON.stringify(res.ets_payload_preview), "ets");
+    } else {
+        toast(errText(res));
+    }
+    await refresh();
+};
+document.getElementById("ctrlHead").onclick = () => {
+    document.getElementById("control").classList.toggle("collapsed");
+};
+document.getElementById("probHead").onclick = () => {
+    document.getElementById("problems").classList.toggle("collapsed");
+};
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        const f = document.getElementById("carFilter");
+        if (document.activeElement === f) {
+            f.value = "";
+            carSearch = "";
+            renderCarList();
+            f.blur();
+            return;
+        }
+        if (document.getElementById("estpModal").classList.contains("on")) {
+            closeEstpDialog();
+            return;
+        }
+        if (state && state.active) selectCar(state.active);
+        return;
+    }
+    if (e.key === "/" && document.activeElement.tagName !== "INPUT") {
+        e.preventDefault();
+        document.getElementById("carFilter").focus();
+    }
+    // Ctrl+Shift+E → ESTP dialog with all problem cars
+    if (e.ctrlKey && e.shiftKey && e.key === "E") {
+        e.preventDefault();
+        openEstpDialog(problemCars().map((c) => c.plate));
+    }
+});
+map.on("zoomend", () => { if (showChips) paintChips(); });
+
+/* Drag the card by its header */
+(function () {
+    const card = document.getElementById("card");
+    const head = document.getElementById("cardHead");
+    let on = false, dx = 0, dy = 0;
+    head.addEventListener("mousedown", (e) => {
+        if (e.target.closest("button")) return;
+        on = true;
+        const r = card.getBoundingClientRect();
+        dx = e.clientX - r.left; dy = e.clientY - r.top;
+        e.preventDefault();
+    });
+    document.addEventListener("mousemove", (e) => {
+        if (!on) return;
+        const x = Math.max(0, Math.min(e.clientX - dx, window.innerWidth - card.offsetWidth));
+        const y = Math.max(0, Math.min(e.clientY - dy, window.innerHeight - card.offsetHeight));
+        card.style.left = x + "px"; card.style.top = y + "px"; card.style.bottom = "auto";
+    });
+    document.addEventListener("mouseup", () => { on = false; });
+})();
+
+/* =====================================================================
+    ESTP dialog
+    ===================================================================== */
+function openEstpDialog(plates) {
+    const cars = (state.cars || []).filter((c) => plates.includes(c.plate));
+    if (!cars.length) return;
+    document.getElementById("estpCount").textContent = " · " + cars.length + " ТС";
+    const box = document.getElementById("estpRows");
+    box.innerHTML = "";
+    cars.forEach((c) => {
+        const a = autoSla(c.problem);
+        const row = document.createElement("div");
+        row.className = "estpRow";
+        row.dataset.plate = c.plate;
+        row.innerHTML =
+            '<span class="plate">' + esc(c.plate) + "</span>" +
+            '<span class="prob" title="' + esc(c.problem) + '">' + esc(c.problem) + "</span>" +
+            "<select>" + SLA_OPTIONS.map((s) =>
+                "<option" + (s === a.sla ? " selected" : "") + ">" + esc(s) + "</option>").join("") +
+            "</select>" +
+            '<input placeholder="Комментарий" value="' + esc(a.comment) + '">' +
+            '<span class="res"></span>';
+        box.appendChild(row);
+    });
+    document.getElementById("estpModal").classList.add("on");
+    document.getElementById("estpSend").disabled = false;
+    document.getElementById("estpHint").textContent =
+        "Классификация подставлена по типу проблемы — можно поменять.";
+}
+
+function closeEstpDialog() {
+    document.getElementById("estpModal").classList.remove("on");
+}
+
+function renderEstpProgress() {
+    const e = (state && state.estp) || {};
+    if (!document.getElementById("estpModal").classList.contains("on")) return;
+    const byPlate = {};
+    (e.results || []).forEach((r) => byPlate[r.plate] = r);
+    document.querySelectorAll(".estpRow").forEach((row) => {
+        const r = byPlate[row.dataset.plate];
+        const cell = row.querySelector(".res");
+        if (!r) {
+            cell.textContent = e.status === "running" && e.current === row.dataset.plate ? "отправка…" : "";
+            cell.className = "res";
+            return;
+        }
+        cell.textContent = (r.ok ? "✓ " : "✗ ") + (r.message || "");
+        cell.className = "res " + (r.ok ? "ok" : "bad");
+    });
+    if (e.status === "running") {
+        document.getElementById("estpHint").textContent =
+            "Отправка " + (e.done || 0) + "/" + (e.total || 0) + (e.current ? " · " + e.current : "") + "…";
+        document.getElementById("estpSend").disabled = true;
+    } else if (e.status === "done") {
+        const ok = (e.results || []).filter((r) => r.ok).length;
+        document.getElementById("estpHint").textContent =
+            "Готово: " + ok + " из " + (e.results || []).length + " заявок создано.";
+        document.getElementById("estpSend").disabled = true;
+    } else if (e.status === "error") {
+        document.getElementById("estpHint").textContent = "Ошибка: " + e.error;
+        document.getElementById("estpSend").disabled = false;
+    }
+}
+
+document.getElementById("btnEstp").onclick = () => openEstpDialog([...probSel]);
+document.getElementById("estpClose").onclick = closeEstpDialog;
+document.getElementById("estpCancel").onclick = closeEstpDialog;
+document.getElementById("estpModal").onclick = (e) => {
+    if (e.target.id === "estpModal") closeEstpDialog();
+};
+document.getElementById("estpSend").onclick = async () => {
+    const tickets = Array.from(document.querySelectorAll(".estpRow")).map((row) => {
+        const car = (state.cars || []).find((c) => c.plate === row.dataset.plate) || {};
+        return {
+            plate: row.dataset.plate,
+            problem_type: car.problem || "",
+            sla: row.querySelector("select").value,
+            comment: row.querySelector("input").value,
+        };
+    });
+    const res = await api.estpSubmit(tickets);
+    if (!res.ok) return void toast(errText(res));
+    document.getElementById("estpSend").disabled = true;
+    document.getElementById("estpHint").textContent = "Заявки в очереди… ждём браузер.";
+};
+
+/* =====================================================================
+    Refresh. Polling keeps the page and the SQLite base in sync without
+    pushing data through runJavaScript.
+    ===================================================================== */
+async function refresh() {
+    const res = await api.state();
+    if (!res.ok) { toast("Сервер недоступен: " + errText(res)); return; }
+    state = res.state;
+    paint();
+    if (showTrack && state.active && trackPlate !== state.active) await drawTrack(state.active);
+    if (!state.active) { trackLayer.clearLayers(); trackPlate = null; }
+}
+
+/* Called by Qt after a table row click. No data in the call itself. */
+window.qtFocus = async function () {
+    await refresh();
+    if (state && state.active) {
+        fitRoute(state.active);
+        if (showTrack) await drawTrack(state.active);
+    }
+};
+
+/* =====================================================================
+   Helpers
+   ===================================================================== */
+function short(s, n) { n = n || 44; s = s || ""; return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function fmtDay(d) {
+    if (!d) return "—";
+    const p = String(d).split("-");
+    return p.length === 3 ? p[2] + "." + p[1] + "." + p[0] : d;
+}
+function errText(res) { return res.error ? String(res.error) : "ошибка"; }
+function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+let toastTimer = null;
+function toast(msg) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("on"), 2800);
+}
+function hideHint() {
+    const h = document.getElementById("hint");
+    if (h) h.classList.add("hide");
+}
+setTimeout(hideHint, 14000);
+
+/* =====================================================================
+   Initial view: the district yards. ODH zones are MKAD interchanges
+   spread over the whole city, so fitting them would zoom out to zoom 10.
+   ===================================================================== */
+function fitInitial() {
+    const pool = zones
+        .filter((z) => z.kind === "mun" && !z.thin)
+        .map((z) => poly[z.id])
+        .filter(Boolean);
+    if (!pool.length) return;
+    const b = L.latLngBounds([]);
+    pool.forEach((p) => b.extend(p.getBounds()));
+    map.fitBounds(b, { padding: [40, 40], maxZoom: 14 });
+}
+
+/* =====================================================================
+   Boot
+   ===================================================================== */
+(async function boot() {
+    await loadZones();
+    await refresh();
+    fitInitial();
+    setInterval(refresh, 5000);
+    document.title = "Закрепление · " + zones.length + " зон";
+})().catch((e) => {
+    document.title = "Ошибка загрузки: " + e;
+    api.log("boot failed: " + ((e && e.stack) || e), "err");
+});
+</script>
+</body>
+</html>

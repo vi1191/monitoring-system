@@ -30,3 +30,11 @@ Thumbs.db
 *.state
 streets_roads_clean.geojson
 get_roads_osmnx.py
+
+# routes_lab: локальные секреты, БД и большой кэш выгрузки ЕТС
+credentials.json
+routes_lab/routes.db
+routes_lab/routes.db-shm
+routes_lab/routes.db-wal
+routes_lab/last_seen_cache.json
+routes_lab/data/ets_cache.json
