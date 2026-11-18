@@ -21,7 +21,7 @@ def stable_color(plate):
     """Deterministic color for a car that is not in the current shift list.
 
     Assignments survive a refresh, so a route can belong to a vehicle that is
-    off the road today (yesterday's shift, a demo run). It still needs a
+    off the road today (yesterday's shift, a manual entry). It still needs a
     stable color instead of a random one that changes on every poll.
     """
     import zlib
@@ -73,7 +73,7 @@ class Store:
         self.db = RoutesDB(db_path)
         self.day = datetime.now().strftime("%Y-%m-%d")
         self.active_plate = None
-        self.cars = []            # last ETS collection (or demo fixture)
+        self.cars = []            # last ETS collection (live or cache)
         self._tracks = {}         # plate -> [[lat, lon], ...]
         self.listeners = []       # callables() after any mutation
         self.zones_meta = self._load_zones_meta()
@@ -194,8 +194,8 @@ class Store:
                     continue
                 seen.add(c["plate"])
                 cars_out_dedup.append(c)
-            # Routes may outlive the shift list: a car assigned yesterday or by a
-            # demo run is not on the road today, but its plan is still real work.
+            # Routes may outlive the shift list: a car assigned yesterday or by hand
+            # is not on the road today, but its plan is still real work.
             ghosts = []
             for plate in sorted(routes):
                 rows = routes[plate]

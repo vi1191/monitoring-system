@@ -2,9 +2,8 @@
 # Dev host for the map: runs the API + static files without Qt, so the very
 # same map/index.html can be opened in Chrome while you work on the GUI.
 #
-#   python serve.py                 # demo fixture (no ETS login)
-#   python serve.py --live          # real collection via BotWorker (needs creds)
-#   python serve.py --port 8010 --no-demo
+#   python serve.py            # empty shift (manually add zones to test)
+#   python serve.py --live     # real collection via BotWorker (needs creds)
 import argparse
 import json
 import os
@@ -18,7 +17,6 @@ import preprocess_zones
 from routes_db import RoutesDB
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEMO_CARS = os.path.join(HERE, "data", "demo_cars.json")
 
 
 def ensure_zones(store):
@@ -36,7 +34,6 @@ def main():
     ap.add_argument("--port", type=int, default=8001)
     ap.add_argument("--day", default=datetime.now().strftime("%Y-%m-%d"))
     ap.add_argument("--live", action="store_true", help="collect from ETS")
-    ap.add_argument("--no-demo", action="store_true", help="start with empty shift")
     args = ap.parse_args()
 
     store = Store()
@@ -59,10 +56,6 @@ def main():
         worker.status_msg.connect(lambda m: print("  ", m))
         worker.start()
         store._worker = worker
-    elif not args.no_demo and os.path.exists(DEMO_CARS):
-        with open(DEMO_CARS, encoding="utf-8") as f:
-            store.set_cars(json.load(f))
-        print(f"demo shift: {len(store.cars)} cars")
 
     srv = MapServerThread(store, port=args.port)
     srv.start()

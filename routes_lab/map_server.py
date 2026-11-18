@@ -62,10 +62,7 @@ class MapAPI:
                     s.set_day(payload.get("day"))
                     return {"ok": True, "day": s.day}
                 if act == "collect":
-                    kind = payload.get("kind") or "live"
-                    if kind not in ("live", "demo"):
-                        return {"ok": False, "error": "kind must be live|demo"}
-                    req = s.request_collection(kind, payload.get("day"))
+                    req = s.request_collection("live", payload.get("day"))
                     return {"ok": True, "queued": req}
                 if act == "estp/submit":
                     return s.request_estp(payload.get("tickets"))

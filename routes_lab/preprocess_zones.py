@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from pyproj import Transformer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC_GEOJSON = os.path.normpath(
-    os.path.join(HERE, "..", "map_clean", "road_areas_raw.geojson")
-)
+# The raw ETS dump lives next to zones.json: 14 MB, rebuildable with
+# get_ets_geozones.py, so it is kept out of git while zones.json is not.
+SRC_GEOJSON = os.path.join(HERE, "data", "road_areas_raw.geojson")
 DEFAULT_OUT = os.path.join(HERE, "data", "zones.json")
 
 # Same definition that map_clean/index.html used for proj4js.
@@ -195,6 +195,7 @@ def main():
 
     if not os.path.exists(SRC_GEOJSON):
         print(f"NOT FOUND: {SRC_GEOJSON}", file=sys.stderr)
+        print("Скачай выгрузку зон:  python get_ets_geozones.py", file=sys.stderr)
         return 2
 
     src_size = os.path.getsize(SRC_GEOJSON)

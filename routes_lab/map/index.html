@@ -334,7 +334,6 @@
         <button data-mode="coverage">Покрытие</button>
     </div>
     <button class="tgl go" id="btnLive" title="Обновить из ЕТС (реальные данные)">📡 ЕТС</button>
-    <button class="tgl" id="btnDemo" title="Загрузить демо-данные">🎭 Демо</button>
     <button class="tgl" id="btnExport" title="Скачать маршруты в CSV">📥 CSV</button>
     <button class="tgl" id="btnReport" title="Отчёт по машинам: статус, топливо, пробег">📊 Отчёт</button>
     <button class="tgl" id="btnTrack" title="Фактический трек выбранной машины">Трек</button>
@@ -1133,12 +1132,6 @@ document.getElementById("btnLive").onclick = async () => {
     const res = await api.collect("live", day);
     if (!res.ok) return void toast(errText(res));
     toast("Сбор из ЕТС в очереди…");
-};
-document.getElementById("btnDemo").onclick = async () => {
-    const day = document.getElementById("dayPick").value || state?.day;
-    const res = await api.collect("demo", day);
-    if (!res.ok) return void toast(errText(res));
-    toast("Демо-данные загружаются…");
 };
 document.getElementById("btnExport").onclick = () => {
     window.location.href = "/api/export.csv?day=" + encodeURIComponent(state.day);

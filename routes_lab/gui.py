@@ -6,7 +6,7 @@
 # the two jobs a browser cannot do: host the window and run the ETS collector
 # (Playwright) in a QThread when the page presses «ЕТС».
 #
-#   python gui.py            # demo shift, no ETS login
+#   python gui.py            # open with the last ETS collection (cache)
 #   python gui.py --live     # collect from ETS right away
 import json
 import os
@@ -26,11 +26,9 @@ from routes_db import RoutesDB
 import preprocess_zones
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEMO_CARS = os.path.join(HERE, "data", "demo_cars.json")
 ZONES_JSON = os.path.join(HERE, "data", "zones.json")
-# Last ETS collection, so the next start shows real cars immediately instead of
-# falling back to the demo fixture. The raw API payload is stripped: it is huge
-# and nothing in the UI reads it.
+# Last ETS collection, so the next start shows real cars immediately.
+# The raw API payload is stripped: it is huge and nothing in the UI reads it.
 ETS_CACHE = os.path.join(HERE, "data", "ets_cache.json")
 PORT = 8001
 
@@ -107,8 +105,8 @@ class MainWindow(QMainWindow):
 
         if live:
             self.start_collection("live", self.store.day)
-        elif not self.load_cached():
-            self.load_demo()
+        else:
+            self.load_cached()
 
     # ------------------------------------------------------------------ data
     def save_cache(self, cars):
@@ -156,25 +154,11 @@ class MainWindow(QMainWindow):
             z["id"]: {"name": z["name"], "kind": z["kind"]} for z in data["zones"]
         }
 
-    def load_demo(self):
-        if not os.path.exists(DEMO_CARS):
-            self.store.set_ets(status="error", kind="demo",
-                               error="Нет data/demo_cars.json — выполни: python seed_demo.py")
-            return
-        with open(DEMO_CARS, encoding="utf-8") as f:
-            cars = json.load(f)
-        self.store.set_cars(cars)
-        self.store.set_ets(status="done", kind="demo", source="демо-смена",
-                           day=self.store.day, progress="", cars=len(cars))
-
     # ------------------------------------------------------ ETS collection
     def drain_requests(self):
         req = self.store.take_collection()
         if req:
-            if req["kind"] == "demo":
-                self.load_demo()
-            else:
-                self.start_collection("live", req["day"])
+            self.start_collection("live", req["day"])
             return
         tickets = self.store.take_estp()
         if tickets:
