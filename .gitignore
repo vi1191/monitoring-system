@@ -15,11 +15,9 @@ env/
 node_modules/
 dist/
 
-# IDE / OS
-.vscode/
+# IDE
 .idea/
 .DS_Store
-Thumbs.db
 
 # Скриншоты отладки
 routes_lab/*.png

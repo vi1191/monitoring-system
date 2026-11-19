@@ -21,11 +21,11 @@
 
 ### 1. Зависимости
 
-```
+``````
 python 3.10+
-pip install PyQt6 PyQt6-WebEngine playwright requests pyproj openpyxl
+pip install -r routes_lab/requirements.txt
 playwright install chromium
-```
+``````
 
 ### 2. Креды ЕТС
 
@@ -127,14 +127,49 @@ routes_lab/
 └── credentials.json        # Секреты (gitignored)
 ```
 
-## Известные ограничения
+## Перенос на другой ПК
 
-- 
-oute/send — заглушка (отправка в 1С не реализована)
-- ОДХ (объезд МКАД) — только МКАД в данных ЕТС, улицы района не загружены
-- Для пересборки зон: python get_ets_geozones.py && python preprocess_zones.py
+### На старом ПК (очистка)
 
-## История
+```powershell
+# Всё в git на GitHub — удаляй папку смело
+Remove-Item -Recurse -Force "$env:USERPROFILE\Desktop\monitoring-system"
+```
 
-Ветка 
+### На новом ПК (восстановление)
+
+```powershell
+# 1. Python 3.10+ и VS Code
+# 2. Код
+cd $env:USERPROFILE\Desktop
+git clone https://github.com/vi1191/monitoring-system.git
+cd monitoring-system\routes_lab
+
+# 3. Пакеты
+pip install -r requirements.txt
+playwright install chromium
+
+# 4. VS Code предложит установить расширения (ms-vscode.powershell, koda.koda и др.)
+
+# 5. Данные с флешки/облака:
+#    - credentials.json
+#    - routes.db, routes.db-wal, routes.db-shm (назначения маршрутов)
+
+# 6. Зоны ЕТС (нужны креды)
+python get_ets_geozones.py
+python preprocess_zones.py
+
+# 7. Пуск
+python gui.py --live
+```
+
+### Что не в git (унести вручную)
+
+| Файл | Если потерять |
+|---|---|
+| `credentials.json` | Креды ЕТС/ЕСТП |
+| `routes.db` (+ `-wal`, `-shm`) | Назначения маршрутов |
+| `data/road_areas_raw.geojson` | Перескачается `get_ets_geozones.py` |
+| `data/ets_cache.json` | Пересоберётся кнопкой «📡 ЕТС» |
+
 outes-lab — параллельная разработка.

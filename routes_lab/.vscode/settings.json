@@ -1,0 +1,15 @@
+{
+    "python.defaultInterpreterPath": "python",
+    "python.terminal.activateEnvironment": false,
+    "editor.formatOnSave": false,
+    "files.encoding": "utf8",
+    "files.eol": "\r\n",
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/routes.db*": true,
+        "**/data/ets_cache.json": true,
+        "**/data/road_areas_raw.geojson": true,
+        "**/last_seen_cache.json": true,
+        "**/*.log": true
+    }
+}
